@@ -1,2056 +1,1131 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RecruitIQ — Select Your School</title>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; }
-body {
-  font-family: 'Barlow', sans-serif;
-  background: #0a0f1e;
-  color: white;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem 1rem;
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import requests
+from bs4 import BeautifulSoup
+import re
+import os
+
+app = Flask(__name__)
+CORS(app)
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-.logo {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 48px;
-  font-weight: 900;
-  letter-spacing: 1px;
-  margin-bottom: 6px;
-  text-align: center;
-}
-.logo span { color: #3b82f6; }
-
-.tagline {
-  font-size: 14px;
-  color: #475569;
-  text-align: center;
-  margin-bottom: 52px;
-  font-weight: 500;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
-
-.card {
-  background: #111827;
-  border: 1px solid #1e2a3a;
-  border-radius: 20px;
-  padding: 40px 36px;
-  width: 100%;
-  max-width: 480px;
-}
-
-.card-title {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 20px;
-  font-weight: 700;
-  color: #94a3b8;
-  text-transform: uppercase;
-  letter-spacing: 2px;
-  margin-bottom: 24px;
-  text-align: center;
+# ─── D1 ESPN TEAM IDs ─────────────────────────────────────────────────────────
+ESPN_IDS = {
+    "Duke": "150", "Kansas": "2305", "Kentucky": "96", "Iowa": "2294",
+    "Ohio State": "194", "Michigan": "130", "Indiana": "84", "Purdue": "2509",
+    "Wisconsin": "275", "Michigan State": "127", "Illinois": "356",
+    "Minnesota": "135", "Northwestern": "77", "Nebraska": "158",
+    "Penn State": "213", "Maryland": "97", "Rutgers": "164",
+    "Gonzaga": "2250", "Arizona": "12", "UCLA": "26", "USC": "30",
+    "Oregon": "2483", "Washington": "264", "Colorado": "38", "Utah": "254",
+    "Stanford": "24", "Florida": "57", "Florida State": "52",
+    "North Carolina": "153", "Virginia": "258", "Virginia Tech": "259",
+    "Syracuse": "183", "Pittsburgh": "221", "Louisville": "97",
+    "Notre Dame": "87", "Connecticut": "41", "Villanova": "222",
+    "Creighton": "156", "Marquette": "269", "Xavier": "2752",
+    "Butler": "2086", "Houston": "248", "Baylor": "239", "Texas": "251",
+    "Texas Tech": "2641", "Kansas State": "2306", "Iowa State": "66",
+    "West Virginia": "277", "Tennessee": "2633", "Alabama": "333",
+    "Auburn": "2", "LSU": "99", "Georgia": "61", "Mississippi State": "344",
+    "Ole Miss": "145", "Arkansas": "8", "Missouri": "142",
+    "Vanderbilt": "238", "Texas A&M": "245", "BYU": "252",
+    "Miami (OH)": "193",
+    "Miami Ohio": "193",
+    "Ohio": "195",
+    "Akron": "2006",
+    "Buffalo": "2084",
+    "Kent State": "2307",
+    "Ball State": "2050",
+    "Central Michigan": "2117",
+    "Western Michigan": "2711",
+    "Toledo": "2649",
+    "Northern Illinois": "2459",
+    "Bowling Green": "189",
+    "Eastern Michigan": "2199",
 }
 
-.search-wrap {
-  position: relative;
-  margin-bottom: 16px;
+# ─── D2/D3 School domains ──────────────────────────────────────────────────────
+NCAA_DOMAINS = {
+    # ── Ohio Athletic Conference (OAC) ────────────────────────────────────────
+    "Baldwin Wallace": "bwyellowjackets.com",
+    "Mount Union": "mountunionathletics.com",
+    "Otterbein": "otterbeincardinals.com",
+    "Ohio Northern": "onuathletics.com",
+    "Muskingum": "fightingmuskies.com",
+    "Marietta": "pioneers.marietta.edu",
+    "Heidelberg": "bergathletics.com",
+    "John Carroll": "jcusports.com",
+    "Capital": "capitalcrusaders.com",
+    "Wilmington (OH)": "wilmingtonquakers.com",
+    "Kenyon": "kenyonlords.com",
+    "Ohio Wesleyan": "owuathletics.com",
+    "Hiram": "hiramsports.com",
+    "Wittenberg": "wittenbergathletics.com",
+
+    # ── American Rivers Conference (ARC) Iowa D3 ──────────────────────────────
+    "Buena Vista": "bvuathletics.com",
+    "Wartburg": "go-knights.net",
+    "Coe": "kohawkathletics.com",
+    "Dubuque": "udspartans.com",
+    "Loras": "duhawks.com",
+    "Luther": "luthernorse.com",
+    "Central (IA)": "athletics.central.edu",
+    "Simpson": "simpsonstorm.com",
+    "Nebraska Wesleyan": "nwusports.com",
+
+    # ── ODAC ──────────────────────────────────────────────────────────────────
+    "Guilford": "guilfordquakers.com",
+    "Virginia Wesleyan": "vwcmarlins.com",
+    "Hood": "hoodathletics.com",
+    "Roanoke": "roanokemaroons.com",
+    "Lynchburg": "lynchburghornets.com",
+    "Bridgewater (VA)": "bceagles.com",
+    "Randolph-Macon": "rmcathletics.com",
+    "Washington & Lee": "generalssports.com",
+    "Hampden-Sydney": "hsctrojans.com",
+    "Shenandoah": "shenaventure.com",
+    "Averett": "averettcougars.com",
+    "Eastern Mennonite": "emiroyals.com",
+
+    # ── CCIW ──────────────────────────────────────────────────────────────────
+    "Wheaton (IL)": "wheatoncollegeathletics.com",
+    "Illinois Wesleyan": "iwuathletics.com",
+    "North Central (IL)": "northcentralcardinals.com",
+    "Millikin": "millikinbigblue.com",
+    "Elmhurst": "elmhurstbluejays.com",
+    "Carthage": "carthageathletics.com",
+    "Augustana (IL)": "augieathletics.com",
+
+    # ── MIAC ──────────────────────────────────────────────────────────────────
+    "St. John's (MN)": "gojohnnies.com",
+    "Gustavus Adolphus": "gustavusathletics.com",
+    "Concordia-Moorhead": "concordiathorns.com",
+    "Bethel (MN)": "bethelroyals.com",
+    "Hamline": "hamlineathletics.com",
+    "Augsburg": "augsburgathletics.com",
+    "Carleton": "carletonknights.com",
+    "Macalester": "macathletics.com",
+    "Saint Olaf": "gooles.com",
+
+    # ── UAA ───────────────────────────────────────────────────────────────────
+    "Emory": "emoryeagles.com",
+    "Washington U. in St. Louis": "wustlbears.com",
+    "University of Chicago": "ucathletics.com",
+    "Brandeis": "brandeisathletics.com",
+    "Rochester": "urathletics.com",
+    "New York University": "nyugathletics.com",
+
+    # ── NESCAC ────────────────────────────────────────────────────────────────
+    "Amherst": "amherstathletics.com",
+    "Williams": "ephsports.com",
+    "Middlebury": "middleburyathletics.com",
+    "Bowdoin": "bowdoinpolarbears.com",
+    "Colby": "colbyathletics.com",
+    "Bates": "gobatesbobcats.com",
+    "Trinity (CT)": "trinityathletics.com",
+    "Wesleyan": "wesleyanathletics.com",
+    "Hamilton": "hamiltonathletics.com",
+    "Tufts": "gotuftsjumbos.com",
+
+    # ── Wisconsin D3 ──────────────────────────────────────────────────────────
+    "Wisconsin-Platteville": "letsgopioneers.com",
+    "Wisconsin-La Crosse": "uwlathletics.com",
+    "Wisconsin-Whitewater": "uwwathletics.com",
+    "Wisconsin-Oshkosh": "uwoshathletics.com",
+    "Wisconsin-Stevens Point": "uwsppointers.com",
+    "Wisconsin-Eau Claire": "blugolds.com",
+    "Wisconsin-River Falls": "uwrfathletics.com",
+    "Wisconsin Lutheran": "wlcathletics.com",
+
+    # ── NACC / Heartland ──────────────────────────────────────────────────────
+    "Franklin": "franklingrizzlies.com",
+    "Bluffton": "blufftonbeavers.com",
+    "Trine": "trinethunder.com",
+    "Calvin": "calvinknight.com",
+    "Dordt": "godordt.com",
+
+    # ── Other D3 ──────────────────────────────────────────────────────────────
+    "Chatham": "chathamathletics.com",
+    "Pitt.-Greensburg": "pittgreensburgathletics.com",
+
+    # ── D2 ────────────────────────────────────────────────────────────────────
+    "Washburn": "washburnichabods.com",
+    "Northwest Missouri State": "nwmobearcat.com",
+    "Ferris State": "ferrissports.com",
+    "Grand Valley State": "gvsulakers.com",
+    "Nova Southeastern": "nsusharks.com",
+    "Augustana (SD)": "goaugie.com",
+    "Michigan Tech": "michigantechathletics.com",
+    "Gannon": "gannonknight.com",
+    "Black Hills State": "yellowjacketathletics.com",
+
+    # ── D1 fallback (if ESPN fails) ───────────────────────────────────────────
+    "Miami (OH)": "miamiredhawks.com",
+    "Miami Ohio": "miamiredhawks.com",
+    "Duke": "goduke.com",
+    "Arkansas": "arkansasrazorbacks.com",
+    "BYU": "byucougars.com",
+    "Michigan": "mgoblue.com",
+    "Purdue": "purduesports.com",
 }
 
-#school-input {
-  width: 100%;
-  padding: 16px 18px;
-  font-size: 17px;
-  font-family: 'Barlow', sans-serif;
-  font-weight: 500;
-  background: #0f1f3d;
-  border: 2px solid #1e2a3a;
-  border-radius: 12px;
-  color: white;
-  outline: none;
-  transition: border-color 0.2s;
-}
-#school-input::placeholder { color: #334155; }
-#school-input:focus { border-color: #3b82f6; }
-
-#school-dropdown {
-  display: none;
-  position: absolute;
-  top: 100%; left: 0; right: 0;
-  background: #111827;
-  border: 1px solid #1e2a3a;
-  border-radius: 12px;
-  max-height: 240px;
-  overflow-y: auto;
-  z-index: 999;
-  margin-top: 6px;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+# ─── NAIA slugs ───────────────────────────────────────────────────────────────
+NAIA_SLUGS = {
+    "Benedictine (KS)": "benedictineks", "College of Idaho": "collegeofidaho",
+    "Cornerstone": "cornerstonemi", "Doane": "doanene", "Friends": "friendsks",
+    "Georgetown (KY)": "georgetownky", "Grand View": "grandviewia",
+    "Indiana Wesleyan": "indianawesleyan", "Keiser": "keiserfl",
+    "Lewis-Clark State": "lewisclarkstate", "Life": "life",
+    "Lindsey Wilson": "lindseywilson", "LSU-Alexandria": "lsua",
+    "Marian (IN)": "marianian", "McKendree": "mckendree",
+    "MidAmerica Nazarene": "midamericanazarene", "Mobile": "mobileal",
+    "Morningside": "morningsideia", "Mount Mercy": "mountmercyia",
+    "Northwestern (IA)": "northwesternia", "Oklahoma Wesleyan": "oklahomawesleyan",
+    "Oregon Tech": "oregontech", "Our Lady of the Lake": "ollu",
+    "Peru State": "perustate", "Rocky Mountain": "rockymountainmt",
+    "Saint Ambrose": "saintambrose", "Science & Arts (OK)": "scienceartsok",
+    "Siena Heights": "sienaheights", "Southern Oregon": "southernoregon",
+    "Southwestern (KS)": "southwesternks", "Tabor": "taborks",
+    "Taylor": "taylorin", "Thomas More (KY)": "thomasmorekentucky",
+    "Trevecca Nazarene": "treveccanazarene", "Union (TN)": "uniontn",
+    "Valley City State": "valleycitystate", "Viterbo": "viterbowi",
+    "Wayland Baptist": "waylandbaptist", "William Penn": "williampenn",
 }
 
-.school-opt {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  cursor: pointer;
-  border-bottom: 1px solid #1a2436;
-  font-size: 15px;
-  color: white;
-  transition: background 0.1s;
-}
-.school-opt:last-child { border-bottom: none; }
-.school-opt:hover { background: #0f1f3d; }
-
-.div-badge {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 9px;
-  border-radius: 5px;
-  flex-shrink: 0;
-}
-.D1 { background: #7e22ce; color: white; }
-.D2 { background: #1d4ed8; color: white; }
-.D3 { background: #065f46; color: white; }
-.NAIA { background: #c2410c; color: white; }
-.JUCO { background: #92400e; color: white; }
-
-/* Selected school pill */
-#selected-pill {
-  display: none;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 18px;
-  background: #0f1f3d;
-  border: 2px solid #3b82f6;
-  border-radius: 12px;
-  margin-bottom: 16px;
-}
-#selected-pill.show { display: flex; }
-#selected-school-name { font-size: 16px; font-weight: 600; flex: 1; }
-.clear-btn {
-  background: none; border: none; color: #475569;
-  font-size: 22px; cursor: pointer; line-height: 1; padding: 0;
-}
-.clear-btn:hover { color: white; }
-
-/* Division auto-detected */
-#div-detected {
-  display: none;
-  text-align: center;
-  margin-bottom: 20px;
-  font-size: 13px;
-  color: #64748b;
-}
-#div-detected.show { display: block; }
-#div-detected strong { color: white; }
-
-/* Enter button */
-#enter-btn {
-  display: none;
-  width: 100%;
-  padding: 18px;
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  background: #3b82f6;
-  color: white;
-  border: none;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-#enter-btn.show { display: block; }
-#enter-btn:hover { background: #2563eb; transform: translateY(-1px); }
-
-.or-line {
-  text-align: center;
-  color: #334155;
-  font-size: 12px;
-  margin: 20px 0 0;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+# ─── NJCAA slugs ──────────────────────────────────────────────────────────────
+NJCAA_SLUGS = {
+    "Allen County CC": "allencountycc", "Barton County CC": "bartoncommunitycollege",
+    "Blinn College": "blinncollege", "Butler CC": "butlercommunitycollegeks",
+    "Casper College": "caspercollege", "Central Arizona": "centralarizonacollege",
+    "Chipola College": "chipolacollege", "Cloud County CC": "cloudcountycommunitycollege",
+    "Cochise College": "cochisecollege", "Coffeyville CC": "coffeyvillecommunitycollege",
+    "College of Southern Idaho": "collegeofsouthernidaho",
+    "Connors State": "connorsstatecollege",
+    "Copiah-Lincoln CC": "copiahlincolncommunitycollege",
+    "Cowley College": "cowleycountycommunitycollege",
+    "Dodge City CC": "dodgecitycommunitycollege",
+    "Eastern Arizona": "easternarizonacollege",
+    "Garden City CC": "gardencitycommunitycollege",
+    "Gulf Coast State": "gulfcoaststatecollege",
+    "Hillsborough CC": "hillsboroughcommunitycollege",
+    "Holmes CC": "holmescommunitycollege", "Howard College": "howardcollege",
+    "Hutchinson CC": "hutchinsoncommunitycollege",
+    "Independence CC": "independencecommunitycollege",
+    "Indian Hills CC": "indianhillscommunitycollege",
+    "John A. Logan College": "johnalogancollege", "Kilgore College": "kilgorecollege",
+    "Lake Land College": "lakelandcollege",
+    "Laramie County CC": "laramiecountycommunitycollege",
+    "Meridian CC": "meridiancommunitycollege",
+    "Moberly Area CC": "moberlyareacommunitycollege",
+    "Murray State College": "murraystatecollege", "Navarro College": "navarrocollege",
+    "New Mexico JC": "newmexicojuniorcollege", "North Idaho College": "northidahocollege",
+    "Northeast Mississippi CC": "northeastmississippicommunitycollege",
+    "Northeastern Oklahoma A&M": "northeasternoklahomaamcollege",
+    "Northwest Mississippi CC": "northwestmississippicommunitycollege",
+    "Odessa College": "odessacollege", "Panola College": "panolacollege",
+    "Paris Junior College": "parisjuniorcollege",
+    "Pensacola State": "pensacolastatecollege", "Pratt CC": "prattcommunitycollege",
+    "Ranger College": "rangercollege", "Salt Lake CC": "saltlakecommunitycollege",
+    "Seward County CC": "sewardcountycommunitycollege",
+    "South Plains College": "southplainscollege", "Temple College": "templecollege",
+    "Three Rivers College": "threeriverscommunitycollegemo",
+    "Trinity Valley CC": "trinityvalleycommunitycollege",
+    "Tyler Junior College": "tylerjuniorcollege", "Vincennes": "vincennesuniversity",
+    "Wallace State CC": "wallacestatecommunitycollegehancevil",
+    "Weatherford College": "weatherfordcollege",
+    "Western Nebraska CC": "westernnebraskacommunitycollege",
+    "Western Texas College": "westerntexascollege", "Yavapai College": "yavapaicollege",
 }
 
-@media (max-width: 540px) {
-  .card { padding: 28px 20px; }
-  .logo { font-size: 38px; }
-}
-</style>
-</head>
-<body>
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+def name_matches(text, player_name):
+    parts = player_name.lower().split()
+    return all(p in text.lower() for p in parts if len(p) > 1)
 
-<div class="logo">Recruit<span>IQ</span></div>
-<div class="tagline">Built by a college coach, for the college coach</div>
+def safe_float(cells, idx, default=0.0):
+    try:
+        if idx >= len(cells): return default
+        val = cells[idx].get_text(strip=True).replace('%','').strip()
+        if val in ['-','','--','N/A']: return default
+        return float(val)
+    except:
+        return default
 
-<div class="card">
-  <div class="card-title">Select Your School</div>
+def pct(val):
+    return round(val * 100, 1) if 0 < val <= 1.0 else round(val, 1)
 
-  <!-- Selected pill -->
-  <div id="selected-pill">
-    <span id="selected-school-name">Baldwin Wallace</span>
-    <span id="selected-badge" class="div-badge D3">D3</span>
-    <button class="clear-btn" onclick="clearSchool()">×</button>
-  </div>
+def parse_height(text):
+    """Convert any height format to inches."""
+    if not text: return None
+    text = str(text).strip().replace('"','').replace('\u2019',"'").replace('\u2018',"'")
+    m = re.search(r"(\d)['\u2019](\d{1,2})", text)
+    if m:
+        h = int(m.group(1)) * 12 + int(m.group(2))
+        if 60 <= h <= 96: return h
+    m = re.search(r'\b([5-7])-(\d{1,2})\b', text)
+    if m:
+        h = int(m.group(1)) * 12 + int(m.group(2))
+        if 60 <= h <= 96: return h
+    return None
 
-  <!-- Search input -->
-  <div class="search-wrap" id="search-wrap">
-    <input type="text" id="school-input"
-      placeholder="Search your school..."
-      autocomplete="off"
-      oninput="onSearch(this.value)"
-      onfocus="onFocus()"/>
-    <div id="school-dropdown"></div>
-  </div>
+def detect_platform(html):
+    """Detect Sidearm vs PrestoSports from page footer."""
+    lower = html.lower()
+    if 'sidearmsports.com' in lower or '"sidearm"' in lower or 'sidearm sports' in lower:
+        return 'sidearm'
+    if 'prestosports.com' in lower or 'presto sports' in lower:
+        return 'presto'
+    return 'unknown'
 
-  <!-- Division detected -->
-  <div id="div-detected">
-    Evaluating as <strong id="div-label">D3</strong> &nbsp;·&nbsp; Benchmark: <strong id="bench-label">Emory (D3)</strong>
-  </div>
+def dedup(seq):
+    seen = set()
+    return [x for x in seq if not (x in seen or seen.add(x))]
 
-  <!-- Enter button -->
-  <button id="enter-btn" onclick="enterApp()">
-    Enter RecruitIQ →
-  </button>
+# ─── ESPN D1 FETCHER ──────────────────────────────────────────────────────────
+def fetch_espn_stats(player_name, school_name, season):
+    """Fetch D1 player stats via ESPN hidden API."""
+    espn_id = ESPN_IDS.get(school_name)
+    if not espn_id:
+        for k, v in ESPN_IDS.items():
+            if school_name.lower() in k.lower() or k.lower() in school_name.lower():
+                espn_id = v; break
+    if not espn_id:
+        return None, None, f"School not in ESPN database"
 
-  <div class="or-line">Your roster loads automatically</div>
-</div>
+    try:
+        # Get team roster with player IDs and heights
+        roster_url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams/{espn_id}/roster"
+        resp = requests.get(roster_url, headers=HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return None, None, f"ESPN roster unavailable (status {resp.status_code})"
 
-<script>
-const SCHOOLS = [
-  {n:"Arizona",d:"D1"},
-  {n:"Duke",d:"D1"},
-  {n:"Michigan",d:"D1"},
-  {n:"Houston",d:"D1"},
-  {n:"Purdue",d:"D1"},
-  {n:"Iowa St",d:"D1"},
-  {n:"Connecticut",d:"D1"},
-  {n:"Florida",d:"D1"},
-  {n:"St John's",d:"D1"},
-  {n:"Gonzaga",d:"D1"},
-  {n:"Alabama",d:"D1"},
-  {n:"Illinois",d:"D1"},
-  {n:"Michigan St",d:"D1"},
-  {n:"Arkansas",d:"D1"},
-  {n:"Nebraska",d:"D1"},
-  {n:"Tennessee",d:"D1"},
-  {n:"Vanderbilt",d:"D1"},
-  {n:"Texas Tech",d:"D1"},
-  {n:"Kansas",d:"D1"},
-  {n:"Virginia",d:"D1"},
-  {n:"Wisconsin",d:"D1"},
-  {n:"Kentucky",d:"D1"},
-  {n:"BYU",d:"D1"},
-  {n:"Iowa",d:"D1"},
-  {n:"UCLA",d:"D1"},
-  {n:"Utah St",d:"D1"},
-  {n:"North Carolina",d:"D1"},
-  {n:"Auburn",d:"D1"},
-  {n:"Louisville",d:"D1"},
-  {n:"Ohio St",d:"D1"},
-  {n:"Texas",d:"D1"},
-  {n:"Texas A&M",d:"D1"},
-  {n:"St Mary's CA",d:"D1"},
-  {n:"Villanova",d:"D1"},
-  {n:"Clemson",d:"D1"},
-  {n:"TCU",d:"D1"},
-  {n:"Miami FL",d:"D1"},
-  {n:"Georgia",d:"D1"},
-  {n:"Oklahoma",d:"D1"},
-  {n:"Santa Clara",d:"D1"},
-  {n:"VCU",d:"D1"},
-  {n:"UCF",d:"D1"},
-  {n:"Missouri",d:"D1"},
-  {n:"St Louis",d:"D1"},
-  {n:"Indiana",d:"D1"},
-  {n:"San Diego St",d:"D1"},
-  {n:"Baylor",d:"D1"},
-  {n:"New Mexico",d:"D1"},
-  {n:"NC State",d:"D1"},
-  {n:"Seton Hall",d:"D1"},
-  {n:"Cincinnati",d:"D1"},
-  {n:"SMU",d:"D1"},
-  {n:"West Virginia",d:"D1"},
-  {n:"Mississippi",d:"D1"},
-  {n:"Arizona St",d:"D1"},
-  {n:"USC",d:"D1"},
-  {n:"South Florida",d:"D1"},
-  {n:"Northwestern",d:"D1"},
-  {n:"Washington",d:"D1"},
-  {n:"Oklahoma St",d:"D1"},
-  {n:"Virginia Tech",d:"D1"},
-  {n:"Creighton",d:"D1"},
-  {n:"Stanford",d:"D1"},
-  {n:"Dayton",d:"D1"},
-  {n:"Nevada",d:"D1"},
-  {n:"Boise St",d:"D1"},
-  {n:"Florida St",d:"D1"},
-  {n:"Colorado",d:"D1"},
-  {n:"Miami (OH)",d:"D1"},
-  {n:"Tulsa",d:"D1"},
-  {n:"LSU",d:"D1"},
-  {n:"Wake Forest",d:"D1"},
-  {n:"Xavier",d:"D1"},
-  {n:"Akron",d:"D1"},
-  {n:"BelmontMissouri Val",d:"D1"},
-  {n:"Providence",d:"D1"},
-  {n:"Maryland",d:"D1"},
-  {n:"Butler",d:"D1"},
-  {n:"Mississippi St",d:"D1"},
-  {n:"Minnesota",d:"D1"},
-  {n:"California",d:"D1"},
-  {n:"Grand Canyon",d:"D1"},
-  {n:"Georgetown",d:"D1"},
-  {n:"Oregon",d:"D1"},
-  {n:"Colorado St",d:"D1"},
-  {n:"Marquette",d:"D1"},
-  {n:"High Point",d:"D1"},
-  {n:"Wichita State",d:"D1"},
-  {n:"McNeese State",d:"D1"},
-  {n:"Rutgers",d:"D1"},
-  {n:"Kansas St",d:"D1"},
-  {n:"Syracuse",d:"D1"},
-  {n:"Northern IowaMissouri Val",d:"D1"},
-  {n:"DePaul",d:"D1"},
-  {n:"Pittsburgh",d:"D1"},
-  {n:"St Joseph's PA",d:"D1"},
-  {n:"South Carolina",d:"D1"},
-  {n:"Liberty",d:"D1"},
-  {n:"Notre Dame",d:"D1"},
-  {n:"UNLV",d:"D1"},
-  {n:"George Mason",d:"D1"},
-  {n:"Cal BaptistWestern Athletic",d:"D1"},
-  {n:"Yale",d:"D1"},
-  {n:"Illinois StMissouri Val",d:"D1"},
-  {n:"Utah ValleyWestern Athletic",d:"D1"},
-  {n:"Penn St",d:"D1"},
-  {n:"San Francisco",d:"D1"},
-  {n:"Stephen F. Austin",d:"D1"},
-  {n:"Utah",d:"D1"},
-  {n:"UAB",d:"D1"},
-  {n:"Wyoming",d:"D1"},
-  {n:"Seattle",d:"D1"},
-  {n:"BradleyMissouri Val",d:"D1"},
-  {n:"North Texas",d:"D1"},
-  {n:"Davidson",d:"D1"},
-  {n:"Memphis",d:"D1"},
-  {n:"North Dakota State",d:"D1"},
-  {n:"UNC Wilmington",d:"D1"},
-  {n:"Hofstra",d:"D1"},
-  {n:"Florida Atlantic",d:"D1"},
-  {n:"G Washington",d:"D1"},
-  {n:"Hawaii",d:"D1"},
-  {n:"Sam Houston State",d:"D1"},
-  {n:"Murray StMissouri Val",d:"D1"},
-  {n:"UC Irvine",d:"D1"},
-  {n:"Oregon St",d:"D1"},
-  {n:"Kent State",d:"D1"},
-  {n:"UC San Diego",d:"D1"},
-  {n:"Troy",d:"D1"},
-  {n:"Duquesne",d:"D1"},
-  {n:"Kennesaw State",d:"D1"},
-  {n:"IL ChicagoMissouri Val",d:"D1"},
-  {n:"S IllinoisMissouri Val",d:"D1"},
-  {n:"St Bonaventure",d:"D1"},
-  {n:"Wright St",d:"D1"},
-  {n:"St. Thomas (MN)",d:"D1"},
-  {n:"Tulane",d:"D1"},
-  {n:"Pacific",d:"D1"},
-  {n:"Col Charleston",d:"D1"},
-  {n:"Georgia Tech",d:"D1"},
-  {n:"ValparaisoMissouri Val",d:"D1"},
-  {n:"Washington St",d:"D1"},
-  {n:"Boston College",d:"D1"},
-  {n:"Toledo",d:"D1"},
-  {n:"Arkansas St",d:"D1"},
-  {n:"Western Kentucky",d:"D1"},
-  {n:"Louisiana Tech",d:"D1"},
-  {n:"Temple",d:"D1"},
-  {n:"Charlotte",d:"D1"},
-  {n:"Winthrop",d:"D1"},
-  {n:"Furman",d:"D1"},
-  {n:"Fresno St",d:"D1"},
-  {n:"Penn",d:"D1"},
-  {n:"UT ArlingtonWestern Athletic",d:"D1"},
-  {n:"Middle Tennessee",d:"D1"},
-  {n:"Rhode Island",d:"D1"},
-  {n:"ETSU",d:"D1"},
-  {n:"DrakeMissouri Val",d:"D1"},
-  {n:"Robert Morris",d:"D1"},
-  {n:"Loy Marymount",d:"D1"},
-  {n:"Portland St",d:"D1"},
-  {n:"South Alabama",d:"D1"},
-  {n:"N Colorado",d:"D1"},
-  {n:"Towson",d:"D1"},
-  {n:"Idaho",d:"D1"},
-  {n:"Austin Peay",d:"D1"},
-  {n:"CS Northridge",d:"D1"},
-  {n:"UC Davis",d:"D1"},
-  {n:"Richmond",d:"D1"},
-  {n:"Montana St",d:"D1"},
-  {n:"UC Santa Barbara",d:"D1"},
-  {n:"New Mexico State",d:"D1"},
-  {n:"Merrimack",d:"D1"},
-  {n:"William & Mary",d:"D1"},
-  {n:"Marshall",d:"D1"},
-  {n:"Cornell",d:"D1"},
-  {n:"Oakland",d:"D1"},
-  {n:"UT Rio Grande Valley",d:"D1"},
-  {n:"Utah TechWestern Athletic",d:"D1"},
-  {n:"Harvard",d:"D1"},
-  {n:"Appalachian St",d:"D1"},
-  {n:"N Kentucky",d:"D1"},
-  {n:"Navy",d:"D1"},
-  {n:"Missouri State",d:"D1"},
-  {n:"Mercer",d:"D1"},
-  {n:"Samford",d:"D1"},
-  {n:"Monmouth NJ",d:"D1"},
-  {n:"Queens NC",d:"D1"},
-  {n:"Montana",d:"D1"},
-  {n:"Bowling Green",d:"D1"},
-  {n:"James Madison",d:"D1"},
-  {n:"Fordham",d:"D1"},
-  {n:"Lipscomb",d:"D1"},
-  {n:"Portland",d:"D1"},
-  {n:"Tennessee State",d:"D1"},
-  {n:"Southern Miss",d:"D1"},
-  {n:"Siena",d:"D1"},
-  {n:"CS Fullerton",d:"D1"},
-  {n:"Texas A&M-Corpus Christi",d:"D1"},
-  {n:"Cent Arkansas",d:"D1"},
-  {n:"Massachusetts",d:"D1"},
-  {n:"Ga Southern",d:"D1"},
-  {n:"Jacksonville State",d:"D1"},
-  {n:"San Jose St",d:"D1"},
-  {n:"E Washington",d:"D1"},
-  {n:"Campbell",d:"D1"},
-  {n:"Rice",d:"D1"},
-  {n:"Coastal Car",d:"D1"},
-  {n:"Wofford",d:"D1"},
-  {n:"Texas St",d:"D1"},
-  {n:"Florida International",d:"D1"},
-  {n:"Ohio",d:"D1"},
-  {n:"Weber St",d:"D1"},
-  {n:"Loyola-Chicago",d:"D1"},
-  {n:"Indiana StMissouri Val",d:"D1"},
-  {n:"Detroit",d:"D1"},
-  {n:"PFW",d:"D1"},
-  {n:"Wisconsin-Green Bay",d:"D1"},
-  {n:"UMBC",d:"D1"},
-  {n:"Drexel",d:"D1"},
-  {n:"Columbia",d:"D1"},
-  {n:"Vermont",d:"D1"},
-  {n:"Quinnipiac",d:"D1"},
-  {n:"Marist",d:"D1"},
-  {n:"South Dakota State",d:"D1"},
-  {n:"Buffalo",d:"D1"},
-  {n:"Tarleton StWestern Athletic",d:"D1"},
-  {n:"LIU Brooklyn",d:"D1"},
-  {n:"San Diego",d:"D1"},
-  {n:"Abilene ChrWestern Athletic",d:"D1"},
-  {n:"New Orleans",d:"D1"},
-  {n:"La Salle",d:"D1"},
-  {n:"Howard",d:"D1"},
-  {n:"Cal Poly",d:"D1"},
-  {n:"East Carolina",d:"D1"},
-  {n:"W Carolina",d:"D1"},
-  {n:"Tennessee-Martin",d:"D1"},
-  {n:"Youngstown St",d:"D1"},
-  {n:"Iona",d:"D1"},
-  {n:"UTEP",d:"D1"},
-  {n:"Nicholls State",d:"D1"},
-  {n:"North Dakota",d:"D1"},
-  {n:"Stony Brook",d:"D1"},
-  {n:"SE Missouri State",d:"D1"},
-  {n:"St Peter's",d:"D1"},
-  {n:"Nebraska Omaha",d:"D1"},
-  {n:"UNC Asheville",d:"D1"},
-  {n:"FGCU",d:"D1"},
-  {n:"Fairfield",d:"D1"},
-  {n:"Denver",d:"D1"},
-  {n:"Morehead State",d:"D1"},
-  {n:"Colgate",d:"D1"},
-  {n:"Wisconsin-Milwaukee",d:"D1"},
-  {n:"Elon",d:"D1"},
-  {n:"Radford",d:"D1"},
-  {n:"UNC Greensboro",d:"D1"},
-  {n:"Idaho St",d:"D1"},
-  {n:"Princeton",d:"D1"},
-  {n:"Old Dominion",d:"D1"},
-  {n:"SIUE",d:"D1"},
-  {n:"Longwood",d:"D1"},
-  {n:"Chattanooga",d:"D1"},
-  {n:"Pepperdine",d:"D1"},
-  {n:"Delaware",d:"D1"},
-  {n:"Presbyterian",d:"D1"},
-  {n:"UC Riverside",d:"D1"},
-  {n:"Southern UtahWestern Athletic",d:"D1"},
-  {n:"South Dakota",d:"D1"},
-  {n:"Lamar",d:"D1"},
-  {n:"Eastern Michigan",d:"D1"},
-  {n:"Long Beach St",d:"D1"},
-  {n:"Dartmouth",d:"D1"},
-  {n:"Mt St Mary's",d:"D1"},
-  {n:"Ball State",d:"D1"},
-  {n:"American University",d:"D1"},
-  {n:"EvansvilleMissouri Val",d:"D1"},
-  {n:"Louisiana",d:"D1"},
-  {n:"Boston University",d:"D1"},
-  {n:"Central Michigan",d:"D1"},
-  {n:"Southern Univ",d:"D1"},
-  {n:"Bethune-Cookman",d:"D1"},
-  {n:"Hampton",d:"D1"},
-  {n:"Charleston So",d:"D1"},
-  {n:"Lindenwood",d:"D1"},
-  {n:"Incarnate Word",d:"D1"},
-  {n:"Cleveland St",d:"D1"},
-  {n:"Bellarmine",d:"D1"},
-  {n:"CS Sacramento",d:"D1"},
-  {n:"Lehigh",d:"D1"},
-  {n:"Western Michigan",d:"D1"},
-  {n:"Central Conn",d:"D1"},
-  {n:"SE Louisiana",d:"D1"},
-  {n:"Jacksonville",d:"D1"},
-  {n:"Georgia St",d:"D1"},
-  {n:"E Kentucky",d:"D1"},
-  {n:"Sacred Heart",d:"D1"},
-  {n:"Brown",d:"D1"},
-  {n:"Northwestern State",d:"D1"},
-  {n:"West Georgia",d:"D1"},
-  {n:"Northern Arizona",d:"D1"},
-  {n:"Oral Roberts",d:"D1"},
-  {n:"Houston Christian",d:"D1"},
-  {n:"East Texas A&M",d:"D1"},
-  {n:"SC Upstate",d:"D1"},
-  {n:"Prairie View",d:"D1"},
-  {n:"Stetson",d:"D1"},
-  {n:"MA Lowell",d:"D1"},
-  {n:"Northeastern",d:"D1"},
-  {n:"NC A&T",d:"D1"},
-  {n:"Arkansas-Little Rock",d:"D1"},
-  {n:"Mercyhurst",d:"D1"},
-  {n:"NJIT",d:"D1"},
-  {n:"Florida A&M",d:"D1"},
-  {n:"Northern Illinois",d:"D1"},
-  {n:"Norfolk St",d:"D1"},
-  {n:"Tennessee Tech",d:"D1"},
-  {n:"Grambling",d:"D1"},
-  {n:"UT San Antonio",d:"D1"},
-  {n:"Eastern Illinois",d:"D1"},
-  {n:"Alabama A&M",d:"D1"},
-  {n:"North Alabama",d:"D1"},
-  {n:"CS Bakersfield",d:"D1"},
-  {n:"Manhattan",d:"D1"},
-  {n:"Wagner",d:"D1"},
-  {n:"Bucknell",d:"D1"},
-  {n:"Citadel",d:"D1"},
-  {n:"Le Moyne",d:"D1"},
-  {n:"SUNY Albany",d:"D1"},
-  {n:"TX Southern",d:"D1"},
-  {n:"Jackson St",d:"D1"},
-  {n:"Lafayette",d:"D1"},
-  {n:"Loyola Maryland",d:"D1"},
-  {n:"Bryant",d:"D1"},
-  {n:"Holy Cross",d:"D1"},
-  {n:"Canisius",d:"D1"},
-  {n:"NC Central",d:"D1"},
-  {n:"Arkansas-Pine Bluff",d:"D1"},
-  {n:"Air Force",d:"D1"},
-  {n:"Alabama St",d:"D1"},
-  {n:"Army",d:"D1"},
-  {n:"Niagara",d:"D1"},
-  {n:"North Florida",d:"D1"},
-  {n:"IUPUI",d:"D1"},
-  {n:"Stonehill",d:"D1"},
-  {n:"Alcorn St",d:"D1"},
-  {n:"New Haven",d:"D1"},
-  {n:"Morgan St",d:"D1"},
-  {n:"Maine",d:"D1"},
-  {n:"New Hampshire",d:"D1"},
-  {n:"F Dickinson",d:"D1"},
-  {n:"S Carolina St",d:"D1"},
-  {n:"Southern Indiana",d:"D1"},
-  {n:"Chicago St",d:"D1"},
-  {n:"MD E Shore",d:"D1"},
-  {n:"Rider",d:"D1"},
-  {n:"VMI",d:"D1"},
-  {n:"UMKC",d:"D1"},
-  {n:"St Francis PA",d:"D1"},
-  {n:"ULM",d:"D1"},
-  {n:"Gardner Webb",d:"D1"},
-  {n:"Binghamton",d:"D1"},
-  {n:"Coppin St",d:"D1"},
-  {n:"Delaware St",d:"D1"},
-  {n:"Western Illinois",d:"D1"},
-  {n:"MS Valley St",d:"D1"},
-  {n:"Nova Southeastern",d:"D2"},
-  {n:"Washburn",d:"D2"},
-  {n:"Gannon",d:"D2"},
-  {n:"CSU East BayCalifornia",d:"D2"},
-  {n:"Daemen",d:"D2"},
-  {n:"Oklahoma Baptist",d:"D2"},
-  {n:"Michigan Tech",d:"D2"},
-  {n:"Dallas Baptist",d:"D2"},
-  {n:"Lubbock Chr",d:"D2"},
-  {n:"Black Hills StRocky Mtn AC",d:"D2"},
-  {n:"N Michigan",d:"D2"},
-  {n:"Walsh",d:"D2"},
-  {n:"St Cloud",d:"D2"},
-  {n:"Anderson SC",d:"D2"},
-  {n:"Grand Valley State",d:"D2"},
-  {n:"West Liberty",d:"D2"},
-  {n:"Central Missouri",d:"D2"},
-  {n:"Rockhurst",d:"D2"},
-  {n:"Lander",d:"D2"},
-  {n:"E New Mexico",d:"D2"},
-  {n:"MN Duluth",d:"D2"},
-  {n:"Point Loma",d:"D2"},
-  {n:"Palm Beach Atl",d:"D2"},
-  {n:"Rogers St",d:"D2"},
-  {n:"MO Western",d:"D2"},
-  {n:"Fort Hays St",d:"D2"},
-  {n:"Lenoir-Rhyne",d:"D2"},
-  {n:"McKendree",d:"D2"},
-  {n:"Fairmont St",d:"D2"},
-  {n:"Indiana PA",d:"D2"},
-  {n:"AL Huntsville",d:"D2"},
-  {n:"West Alabama",d:"D2"},
-  {n:"Wm Jewell",d:"D2"},
-  {n:"Augustana SD",d:"D2"},
-  {n:"St Martin's",d:"D2"},
-  {n:"St Edward's",d:"D2"},
-  {n:"California PA",d:"D2"},
-  {n:"Southern Nazarene",d:"D2"},
-  {n:"Concordia SP",d:"D2"},
-  {n:"MN Mankato",d:"D2"},
-  {n:"Lake Superior State",d:"D2"},
-  {n:"Arkansas-FS",d:"D2"},
-  {n:"Ouachita Baptist",d:"D2"},
-  {n:"Lake Erie",d:"D2"},
-  {n:"Harding",d:"D2"},
-  {n:"Catawba",d:"D2"},
-  {n:"SW Minnesota",d:"D2"},
-  {n:"St Mary's TX",d:"D2"},
-  {n:"Montevallo",d:"D2"},
-  {n:"W Texas A&M",d:"D2"},
-  {n:"Missouri S&T",d:"D2"},
-  {n:"FL Southern",d:"D2"},
-  {n:"St Anselm",d:"D2"},
-  {n:"Findlay",d:"D2"},
-  {n:"CS Dom. HillsCalifornia",d:"D2"},
-  {n:"North Georgia",d:"D2"},
-  {n:"MO St Louis",d:"D2"},
-  {n:"Upper Iowa",d:"D2"},
-  {n:"MO Southern",d:"D2"},
-  {n:"Columbus St",d:"D2"},
-  {n:"Ashland",d:"D2"},
-  {n:"W New Mexico",d:"D2"},
-  {n:"NW Missouri",d:"D2"},
-  {n:"West Florida",d:"D2"},
-  {n:"Lincoln Mem",d:"D2"},
-  {n:"C Oklahoma",d:"D2"},
-  {n:"Indianapolis",d:"D2"},
-  {n:"Felician",d:"D2"},
-  {n:"Pittsburg St",d:"D2"},
-  {n:"Charleston WV",d:"D2"},
-  {n:"Moorhead St",d:"D2"},
-  {n:"Virginia Union",d:"D2"},
-  {n:"CO MesaRocky Mtn AC",d:"D2"},
-  {n:"IL Springfield",d:"D2"},
-  {n:"West Chester",d:"D2"},
-  {n:"Sioux Falls",d:"D2"},
-  {n:"Carson-Newman",d:"D2"},
-  {n:"Bentley",d:"D2"},
-  {n:"Wayne State (NE)",d:"D2"},
-  {n:"Ft LewisRocky Mtn AC",d:"D2"},
-  {n:"UVA-Wise",d:"D2"},
-  {n:"Fayetteville St",d:"D2"},
-  {n:"CSU-PuebloRocky Mtn AC",d:"D2"},
-  {n:"MT St-Billings",d:"D2"},
-  {n:"Millersville",d:"D2"},
-  {n:"Purdue Northwest",d:"D2"},
-  {n:"E Stroudsburg",d:"D2"},
-  {n:"Drury",d:"D2"},
-  {n:"Valdosta St",d:"D2"},
-  {n:"Kentucky Wesleyan",d:"D2"},
-  {n:"Trevecca Naz",d:"D2"},
-  {n:"SC Beaufort",d:"D2"},
-  {n:"Ohio Dominican",d:"D2"},
-  {n:"Tampa",d:"D2"},
-  {n:"Angelo St",d:"D2"},
-  {n:"Barry",d:"D2"},
-  {n:"Lee TN",d:"D2"},
-  {n:"Hawaii Pacific",d:"D2"},
-  {n:"Jamestown",d:"D2"},
-  {n:"AK Anchorage",d:"D2"},
-  {n:"Shepherd",d:"D2"},
-  {n:"NC Pembroke",d:"D2"},
-  {n:"CS Poly PomonaCalifornia",d:"D2"},
-  {n:"Wayne St MI",d:"D2"},
-  {n:"Lynn",d:"D2"},
-  {n:"Westmont",d:"D2"},
-  {n:"Seton Hill",d:"D2"},
-  {n:"Saginaw Val",d:"D2"},
-  {n:"Embry-Riddle FL",d:"D2"},
-  {n:"Northwood (MI)",d:"D2"},
-  {n:"NW Nazarene",d:"D2"},
-  {n:"Assumption",d:"D2"},
-  {n:"Flagler",d:"D2"},
-  {n:"Slippery Rock",d:"D2"},
-  {n:"Emporia St",d:"D2"},
-  {n:"Minot St",d:"D2"},
-  {n:"Northern St SD",d:"D2"},
-  {n:"CS Monterey BayCalifornia",d:"D2"},
-  {n:"SW Baptist",d:"D2"},
-  {n:"Glenville St",d:"D2"},
-  {n:"WI Parkside",d:"D2"},
-  {n:"NE Oklahoma",d:"D2"},
-  {n:"C Washington",d:"D2"},
-  {n:"Adelphi",d:"D2"},
-  {n:"UT Tyler",d:"D2"},
-  {n:"East Central (OK)",d:"D2"},
-  {n:"Truman St",d:"D2"},
-  {n:"Adams StRocky Mtn AC",d:"D2"},
-  {n:"Winona St",d:"D2"},
-  {n:"CS San Bern.California",d:"D2"},
-  {n:"Davenport",d:"D2"},
-  {n:"Concordia CA",d:"D2"},
-  {n:"NE Kearney",d:"D2"},
-  {n:"Cedarville",d:"D2"},
-  {n:"Humboldt StCalifornia",d:"D2"},
-  {n:"Wingate",d:"D2"},
-  {n:"Seattle Pacific",d:"D2"},
-  {n:"Wheeling",d:"D2"},
-  {n:"Quincy",d:"D2"},
-  {n:"St Michael's",d:"D2"},
-  {n:"Colorado MinesRocky Mtn AC",d:"D2"},
-  {n:"Georgia SW",d:"D2"},
-  {n:"Malone",d:"D2"},
-  {n:"Hillsdale",d:"D2"},
-  {n:"S New Hampshire",d:"D2"},
-  {n:"Vanguard",d:"D2"},
-  {n:"Ferris St",d:"D2"},
-  {n:"Thomas More",d:"D2"},
-  {n:"Biola",d:"D2"},
-  {n:"Pace",d:"D2"},
-  {n:"Dominican CA",d:"D2"},
-  {n:"Virginia St",d:"D2"},
-  {n:"Emory & Henry",d:"D2"},
-  {n:"Rollins",d:"D2"},
-  {n:"CS San MarcosCalifornia",d:"D2"},
-  {n:"Chaminade",d:"D2"},
-  {n:"Young Harris",d:"D2"},
-  {n:"Southern Arkansas",d:"D2"},
-  {n:"W Washington",d:"D2"},
-  {n:"Wm Jessup",d:"D2"},
-  {n:"Eckerd",d:"D2"},
-  {n:"TX A&M K'ville",d:"D2"},
-  {n:"Georgia C&S",d:"D2"},
-  {n:"Col SpringsRocky Mtn AC",d:"D2"},
-  {n:"SC Aiken",d:"D2"},
-  {n:"Fresno Pacific",d:"D2"},
-  {n:"Southwestern Oklahoma",d:"D2"},
-  {n:"CS StanislausCalifornia",d:"D2"},
-  {n:"Concord",d:"D2"},
-  {n:"Henderson State",d:"D2"},
-  {n:"AK Fairbanks",d:"D2"},
-  {n:"Bemidji St",d:"D2"},
-  {n:"Delta St",d:"D2"},
-  {n:"Thomas Aquinas",d:"D2"},
-  {n:"Lincoln MO",d:"D2"},
-  {n:"Augusta",d:"D2"},
-  {n:"Clarion",d:"D2"},
-  {n:"Morehouse",d:"D2"},
-  {n:"Oklahoma Chr",d:"D2"},
-  {n:"Claflin",d:"D2"},
-  {n:"Northwestern Oklahoma State",d:"D2"},
-  {n:"Edinboro",d:"D2"},
-  {n:"Permian Basin",d:"D2"},
-  {n:"Florida Tech",d:"D2"},
-  {n:"SE Oklahoma State",d:"D2"},
-  {n:"Tuskegee",d:"D2"},
-  {n:"NM HighlandsRocky Mtn AC",d:"D2"},
-  {n:"Clark Atlanta",d:"D2"},
-  {n:"Pitt-Johnstown",d:"D2"},
-  {n:"Midwest TX St",d:"D2"},
-  {n:"Union TN",d:"D2"},
-  {n:"S Connecticut",d:"D2"},
-  {n:"Goldey Beacom",d:"D2"},
-  {n:"Chowan",d:"D2"},
-  {n:"Arkansas Tech",d:"D2"},
-  {n:"T Jefferson",d:"D2"},
-  {n:"Staten Island",d:"D2"},
-  {n:"Emmanuel GA",d:"D2"},
-  {n:"Bluefield St",d:"D2"},
-  {n:"Newberry",d:"D2"},
-  {n:"Miles",d:"D2"},
-  {n:"Dominican NY",d:"D2"},
-  {n:"Tusculum",d:"D2"},
-  {n:"Frostburg St",d:"D2"},
-  {n:"Arkansas-Monticello",d:"D2"},
-  {n:"UC MercedCalifornia",d:"D2"},
-  {n:"Caldwell",d:"D2"},
-  {n:"Cal St-LACalifornia",d:"D2"},
-  {n:"Shippensburg",d:"D2"},
-  {n:"Shaw NC",d:"D2"},
-  {n:"CS ChicoCalifornia",d:"D2"},
-  {n:"Texas A&M Intl",d:"D2"},
-  {n:"Mississippi Col",d:"D2"},
-  {n:"Westminster UTRocky Mtn AC",d:"D2"},
-  {n:"Colorado ChrRocky Mtn AC",d:"D2"},
-  {n:"Metro StRocky Mtn AC",d:"D2"},
-  {n:"W Oregon",d:"D2"},
-  {n:"Azusa Pacific",d:"D2"},
-  {n:"Cameron",d:"D2"},
-  {n:"Post",d:"D2"},
-  {n:"Ferrum",d:"D2"},
-  {n:"Tiffin",d:"D2"},
-  {n:"MN Crookston",d:"D2"},
-  {n:"Davis & Elkins",d:"D2"},
-  {n:"Simon Fraser",d:"D2"},
-  {n:"Western St CORocky Mtn AC",d:"D2"},
-  {n:"UT Dallas",d:"D2"},
-  {n:"Lewis",d:"D2"},
-  {n:"Barton",d:"D2"},
-  {n:"Hawaii Hilo",d:"D2"},
-  {n:"North Greenville",d:"D2"},
-  {n:"Mary ND",d:"D2"},
-  {n:"Chr Brothers",d:"D2"},
-  {n:"Savannah State",d:"D2"},
-  {n:"SD MinesRocky Mtn AC",d:"D2"},
-  {n:"Chadron StRocky Mtn AC",d:"D2"},
-  {n:"St Leo",d:"D2"},
-  {n:"JC Smith",d:"D2"},
-  {n:"Roosevelt",d:"D2"},
-  {n:"Bridgeport",d:"D2"},
-  {n:"Lincoln PA",d:"D2"},
-  {n:"Wilmington DE",d:"D2"},
-  {n:"Mars Hill",d:"D2"},
-  {n:"Mid Georgia",d:"D2"},
-  {n:"Edward Waters",d:"D2"},
-  {n:"Franklin Pierce",d:"D2"},
-  {n:"Newman",d:"D2"},
-  {n:"Menlo",d:"D2"},
-  {n:"Holy Family",d:"D2"},
-  {n:"Lock Haven",d:"D2"},
-  {n:"WV State",d:"D2"},
-  {n:"Sul Ross State",d:"D2"},
-  {n:"LeMoyne-Owen",d:"D2"},
-  {n:"Fort Valley State",d:"D2"},
-  {n:"Point Park",d:"D2"},
-  {n:"King",d:"D2"},
-  {n:"Benedict",d:"D2"},
-  {n:"Auburn M'gomery",d:"D2"},
-  {n:"Bowie State",d:"D2"},
-  {n:"S Francisco StCalifornia",d:"D2"},
-  {n:"American Intl",d:"D2"},
-  {n:"S Wesleyan",d:"D2"},
-  {n:"Coker",d:"D2"},
-  {n:"Chestnut Hill",d:"D2"},
-  {n:"Livingstone",d:"D2"},
-  {n:"Albany State (GA)",d:"D2"},
-  {n:"Converse",d:"D2"},
-  {n:"Georgian Court",d:"D2"},
-  {n:"Mt Olive",d:"D2"},
-  {n:"Roberts Wslyn",d:"D2"},
-  {n:"Maryville MO",d:"D2"},
-  {n:"Lane",d:"D2"},
-  {n:"D'Youville",d:"D2"},
-  {n:"Central State (OH)",d:"D2"},
-  {n:"Lees-McRae",d:"D2"},
-  {n:"Molloy",d:"D2"},
-  {n:"Eliz. City St",d:"D2"},
-  {n:"Queens NY",d:"D2"},
-  {n:"Salem WV",d:"D2"},
-  {n:"Shorter",d:"D2"},
-  {n:"W Salem St",d:"D2"},
-  {n:"Francis Marion",d:"D2"},
-  {n:"Kutztown",d:"D2"},
-  {n:"Clayton St",d:"D2"},
-  {n:"Bloomfield",d:"D2"},
-  {n:"Belmont Abbey",d:"D2"},
-  {n:"Regis CORocky Mtn AC",d:"D2"},
-  {n:"Allen",d:"D2"},
-  {n:"Bloomsburg",d:"D2"},
-  {n:"Kentucky State",d:"D2"},
-  {n:"Dist Columbia",d:"D2"},
-  {n:"Mansfield",d:"D2"},
-  {n:"Spring Hill",d:"D2"},
-  {n:"Paine",d:"D2"},
-  {n:"Mercy",d:"D2"},
-  {n:"West Virginia Wesleyan",d:"D2"},
-  {n:"Inter American-Bayamon",d:"D2"},
-  {n:"Erskine",d:"D2"},
-  {n:"Freed-Hardeman",d:"NAIA"},
-  {n:"Grace IN",d:"NAIA"},
-  {n:"Northwestern IA",d:"NAIA"},
-  {n:"Indiana Wesleyan",d:"NAIA"},
-  {n:"OK Wesleyan",d:"NAIA"},
-  {n:"Arizona ChrGolden State",d:"NAIA"},
-  {n:"Rocky Mtn",d:"NAIA"},
-  {n:"Ave MariaSun",d:"NAIA"},
-  {n:"Langston",d:"NAIA"},
-  {n:"Morningside",d:"NAIA"},
-  {n:"College of Idaho",d:"NAIA"},
-  {n:"MT Tech",d:"NAIA"},
-  {n:"Hope IntlGolden State",d:"NAIA"},
-  {n:"Cumberlands KY",d:"NAIA"},
-  {n:"Georgetown KY",d:"NAIA"},
-  {n:"Bethel IN",d:"NAIA"},
-  {n:"Eastern Oregon",d:"NAIA"},
-  {n:"Lewis-Clark ID",d:"NAIA"},
-  {n:"Huntington",d:"NAIA"},
-  {n:"KeiserSun",d:"NAIA"},
-  {n:"LSU ShreveportRed River",d:"NAIA"},
-  {n:"Friends",d:"NAIA"},
-  {n:"Wayland",d:"NAIA"},
-  {n:"The Master'sGolden State",d:"NAIA"},
-  {n:"Concordia NE",d:"NAIA"},
-  {n:"Oregon Tech",d:"NAIA"},
-  {n:"Nelson TX",d:"NAIA"},
-  {n:"Benedictine AZ",d:"NAIA"},
-  {n:"Bethel KS",d:"NAIA"},
-  {n:"Graceland",d:"NAIA"},
-  {n:"Carroll MT",d:"NAIA"},
-  {n:"Bellevue",d:"NAIA"},
-  {n:"MT Western",d:"NAIA"},
-  {n:"Southwestern KS",d:"NAIA"},
-  {n:"Pikeville",d:"NAIA"},
-  {n:"Dordt",d:"NAIA"},
-  {n:"Southeastern FLSun",d:"NAIA"},
-  {n:"Columbia MO",d:"NAIA"},
-  {n:"Southern Oregon",d:"NAIA"},
-  {n:"Wm Carey",d:"NAIA"},
-  {n:"William Penn",d:"NAIA"},
-  {n:"TX Wesleyan",d:"NAIA"},
-  {n:"St Mary KS",d:"NAIA"},
-  {n:"Faulkner",d:"NAIA"},
-  {n:"FL MemorialSun",d:"NAIA"},
-  {n:"OK City",d:"NAIA"},
-  {n:"LSU-AlexandriaRed River",d:"NAIA"},
-  {n:"Loyola NO",d:"NAIA"},
-  {n:"Taylor IN",d:"NAIA"},
-  {n:"Dalton St",d:"NAIA"},
-  {n:"Dakota St",d:"NAIA"},
-  {n:"Indiana Tech",d:"NAIA"},
-  {n:"Evangel",d:"NAIA"},
-  {n:"IN Southeast",d:"NAIA"},
-  {n:"McPherson",d:"NAIA"},
-  {n:"Corban",d:"NAIA"},
-  {n:"GA Gwinnett",d:"NAIA"},
-  {n:"MT St Northern",d:"NAIA"},
-  {n:"Mt Vernon Naz",d:"NAIA"},
-  {n:"Madonna",d:"NAIA"},
-  {n:"Shawnee St",d:"NAIA"},
-  {n:"Life",d:"NAIA"},
-  {n:"Campbellsville",d:"NAIA"},
-  {n:"Mt Marty",d:"NAIA"},
-  {n:"St Thomas FLSun",d:"NAIA"},
-  {n:"Briar Cliff",d:"NAIA"},
-  {n:"Mid-America Christian",d:"NAIA"},
-  {n:"Embry-Riddle AZ",d:"NAIA"},
-  {n:"Grand View",d:"NAIA"},
-  {n:"IU Kokomo",d:"NAIA"},
-  {n:"Cent Methodist",d:"NAIA"},
-  {n:"Dakota Wesleyan",d:"NAIA"},
-  {n:"Ottawa AZGolden State",d:"NAIA"},
-  {n:"Tougaloo",d:"NAIA"},
-  {n:"Spring Arbor",d:"NAIA"},
-  {n:"Xavier LARed River",d:"NAIA"},
-  {n:"TX A&M TexarkanaRed River",d:"NAIA"},
-  {n:"Lindsey Wilson",d:"NAIA"},
-  {n:"MO Baptist",d:"NAIA"},
-  {n:"Rochester MI",d:"NAIA"},
-  {n:"Bethel TN",d:"NAIA"},
-  {n:"Bushnell",d:"NAIA"},
-  {n:"St Francis IL",d:"NAIA"},
-  {n:"Avila",d:"NAIA"},
-  {n:"St Francis IN",d:"NAIA"},
-  {n:"Mid Am Nazarene",d:"NAIA"},
-  {n:"Peru St",d:"NAIA"},
-  {n:"Northwest WA",d:"NAIA"},
-  {n:"Rio Grande",d:"NAIA"},
-  {n:"KS Wesleyan",d:"NAIA"},
-  {n:"Lourdes",d:"NAIA"},
-  {n:"Midland NE",d:"NAIA"},
-  {n:"Olivet Naz",d:"NAIA"},
-  {n:"Our Lady LakeRed River",d:"NAIA"},
-  {n:"Mt Mercy",d:"NAIA"},
-  {n:"Governors St",d:"NAIA"},
-  {n:"Benedictine (KS)",d:"NAIA"},
-  {n:"Brewton-Parker",d:"NAIA"},
-  {n:"Missouri Val",d:"NAIA"},
-  {n:"Johnson TN",d:"NAIA"},
-  {n:"Doane",d:"NAIA"},
-  {n:"North AmericanRed River",d:"NAIA"},
-  {n:"Mobile",d:"NAIA"},
-  {n:"Columbia Intl",d:"NAIA"},
-  {n:"John Brown",d:"NAIA"},
-  {n:"Philander Smith",d:"NAIA"},
-  {n:"Cumberland TN",d:"NAIA"},
-  {n:"IN S Bend",d:"NAIA"},
-  {n:"Valley City St",d:"NAIA"},
-  {n:"Baker KS",d:"NAIA"},
-  {n:"Lawrence Tech",d:"NAIA"},
-  {n:"Hastings",d:"NAIA"},
-  {n:"Talladega",d:"NAIA"},
-  {n:"Stillman",d:"NAIA"},
-  {n:"Life PacificGolden State",d:"NAIA"},
-  {n:"Dickinson St ND",d:"NAIA"},
-  {n:"Simpson CA",d:"NAIA"},
-  {n:"Cornerstone",d:"NAIA"},
-  {n:"Oklahoma S&A",d:"NAIA"},
-  {n:"Dillard",d:"NAIA"},
-  {n:"Ottawa KS",d:"NAIA"},
-  {n:"Coastal GASun",d:"NAIA"},
-  {n:"Williams Baptist",d:"NAIA"},
-  {n:"TN Southern",d:"NAIA"},
-  {n:"Mayville St",d:"NAIA"},
-  {n:"Southern New Orleans",d:"NAIA"},
-  {n:"Hannibal-Lagr",d:"NAIA"},
-  {n:"Midway",d:"NAIA"},
-  {n:"WV Tech",d:"NAIA"},
-  {n:"St Mary-Woods",d:"NAIA"},
-  {n:"Ark Baptist",d:"NAIA"},
-  {n:"Union KY",d:"NAIA"},
-  {n:"Central Chr",d:"NAIA"},
-  {n:"Montreat",d:"NAIA"},
-  {n:"Park-Gilbert",d:"NAIA"},
-  {n:"Trinity Chr",d:"NAIA"},
-  {n:"Park",d:"NAIA"},
-  {n:"Washington Advt",d:"NAIA"},
-  {n:"TN Wesleyan",d:"NAIA"},
-  {n:"Central Bap",d:"NAIA"},
-  {n:"W Woods",d:"NAIA"},
-  {n:"Marian IN",d:"NAIA"},
-  {n:"Indiana-East",d:"NAIA"},
-  {n:"Col Ozarks",d:"NAIA"},
-  {n:"Thomas GA",d:"NAIA"},
-  {n:"Providence GF",d:"NAIA"},
-  {n:"St Xavier IL",d:"NAIA"},
-  {n:"UNT DallasRed River",d:"NAIA"},
-  {n:"St Ambrose",d:"NAIA"},
-  {n:"Indiana NW",d:"NAIA"},
-  {n:"N New Mexico",d:"NAIA"},
-  {n:"Westcliff",d:"NAIA"},
-  {n:"Fisk",d:"NAIA"},
-  {n:"Oakwood",d:"NAIA"},
-  {n:"Florida Col",d:"NAIA"},
-  {n:"Truett-McConnell",d:"NAIA"},
-  {n:"WarnerSun",d:"NAIA"},
-  {n:"Point",d:"NAIA"},
-  {n:"Milligan",d:"NAIA"},
-  {n:"Cleary",d:"NAIA"},
-  {n:"Aquinas",d:"NAIA"},
-  {n:"Wilberforce",d:"NAIA"},
-  {n:"Goshen",d:"NAIA"},
-  {n:"Jarvis ChrRed River",d:"NAIA"},
-  {n:"Sterling",d:"NAIA"},
-  {n:"Bryan",d:"NAIA"},
-  {n:"York NE",d:"NAIA"},
-  {n:"Warner Pacific",d:"NAIA"},
-  {n:"SW Christian",d:"NAIA"},
-  {n:"Tabor",d:"NAIA"},
-  {n:"Panhandle St",d:"NAIA"},
-  {n:"Defiance",d:"NAIA"},
-  {n:"WebberSun",d:"NAIA"},
-  {n:"Kentucky Chr",d:"NAIA"},
-  {n:"Columbia SC",d:"NAIA"},
-  {n:"Waldorf",d:"NAIA"},
-  {n:"Calumet-St Jos",d:"NAIA"},
-  {n:"Voorhees",d:"NAIA"},
-  {n:"Reinhardt",d:"NAIA"},
-  {n:"Cal Maritime",d:"NAIA"},
-  {n:"Viterbo",d:"NAIA"},
-  {n:"Oakland City",d:"NAIA"},
-  {n:"Northwestern OH",d:"NAIA"},
-  {n:"Holy Cross IN",d:"NAIA"},
-  {n:"Bethany KS",d:"NAIA"},
-  {n:"Brescia",d:"NAIA"},
-  {n:"Louisiana ChrRed River",d:"NAIA"},
-  {n:"Huston-TillotRed River",d:"NAIA"},
-  {n:"La Sierra",d:"NAIA"},
-  {n:"Clarke",d:"NAIA"},
-  {n:"Mission",d:"NAIA"},
-  {n:"Evergreen State",d:"NAIA"},
-  {n:"Crowley's Ridge",d:"NAIA"},
-  {n:"Texas A&M-SARed River",d:"NAIA"},
-  {n:"Rust",d:"NAIA"},
-  {n:"Paul QuinnRed River",d:"NAIA"},
-  {n:"Spartanburg Meth",d:"NAIA"},
-  {n:"Blue Mtn",d:"NAIA"},
-  {n:"Culver-Stockton",d:"NAIA"},
-  {n:"Siena Hts",d:"NAIA"},
-  {n:"Alice Lloyd",d:"NAIA"},
-  {n:"Stanton",d:"NAIA"},
-  {n:"MI Dearborn",d:"NAIA"},
-  {n:"Virgin Islands",d:"NAIA"},
-  {n:"Bluefield Univ",d:"NAIA"},
-  {n:"Haskell",d:"NAIA"},
-  {n:"Abraham Baldwin",d:"NAIA"},
-  {n:"Morris (SC)",d:"NAIA"},
-  {n:"Carolina Univ",d:"NAIA"},
-  {n:"New College FLSun",d:"NAIA"},
-  {n:"Univ of SouthwestRed River",d:"NAIA"},
-  {n:"Florida National",d:"NAIA"},
-  {n:"Fisher",d:"NAIA"},
-  {n:"Texas ColRed River",d:"NAIA"},
-  {n:"Judson IL",d:"NAIA"},
-  {n:"Hesston",d:"NAIA"},
-  {n:"Harris-Stowe",d:"NAIA"},
-  {n:"Pacific Union",d:"NAIA"},
-  {n:"Walla Walla",d:"NAIA"},
-  {n:"Bismarck St",d:"NAIA"},
-  {n:"Wiley",d:"NAIA"},
-  {n:"UHSP",d:"NAIA"},
-  {n:"IU Columbus",d:"NAIA"},
-  {n:"Emory",d:"D3"},
-  {n:"Trinity (CT)",d:"D3"},
-  {n:"Randolph-Macon",d:"D3"},
-  {n:"Mary Washington",d:"D3"},
-  {n:"University of Chicago",d:"D3"},
-  {n:"Tufts",d:"D3"},
-  {n:"Illinois Wesleyan",d:"D3"},
-  {n:"St. Thomas (TX)",d:"D3"},
-  {n:"Christopher Newport",d:"D3"},
-  {n:"Gustavus Adolphus",d:"D3"},
-  {n:"Wisconsin-La Crosse",d:"D3"},
-  {n:"Redlands",d:"D3"},
-  {n:"Roanoke",d:"D3"},
-  {n:"Washington U. in St. Louis",d:"D3"},
-  {n:"Wesleyan",d:"D3"},
-  {n:"Hood",d:"D3"},
-  {n:"Mount Union",d:"D3"},
-  {n:"New York University",d:"D3"},
-  {n:"Wisconsin-Whitewater",d:"D3"},
-  {n:"John Carroll",d:"D3"},
-  {n:"Claremont-Mudd-Scripps",d:"D3"},
-  {n:"Montclair State",d:"D3"},
-  {n:"Wisconsin-Platteville",d:"D3"},
-  {n:"Virginia Wesleyan",d:"D3"},
-  {n:"Hampden-Sydney",d:"D3"},
-  {n:"Otterbein",d:"D3"},
-  {n:"Trinity (TX)",d:"D3"},
-  {n:"Wisconsin-Oshkosh",d:"D3"},
-  {n:"Wisconsin-Stevens Point",d:"D3"},
-  {n:"Mary Hardin-Baylor",d:"D3"},
-  {n:"Endicott",d:"D3"},
-  {n:"Carthage",d:"D3"},
-  {n:"Babson",d:"D3"},
-  {n:"Elmhurst",d:"D3"},
-  {n:"Catholic",d:"D3"},
-  {n:"Amherst",d:"D3"},
-  {n:"College of NJ",d:"D3"},
-  {n:"Calvin",d:"D3"},
-  {n:"Whitworth",d:"D3"},
-  {n:"Johns Hopkins",d:"D3"},
-  {n:"Brandeis",d:"D3"},
-  {n:"Denison",d:"D3"},
-  {n:"Worcester Tech",d:"D3"},
-  {n:"Trine",d:"D3"},
-  {n:"Ohio Northern",d:"D3"},
-  {n:"Concordia (TX)",d:"D3"},
-  {n:"DePauw",d:"D3"},
-  {n:"Maryville (TN)",d:"D3"},
-  {n:"Nebraska Wesleyan",d:"D3"},
-  {n:"Franklin & Marshall",d:"D3"},
-  {n:"Guilford",d:"D3"},
-  {n:"St Joseph CT",d:"D3"},
-  {n:"Bates",d:"D3"},
-  {n:"Loras",d:"D3"},
-  {n:"Hope",d:"D3"},
-  {n:"Grinnell",d:"D3"},
-  {n:"Coe",d:"D3"},
-  {n:"St. John's (MN)",d:"D3"},
-  {n:"Dubuque",d:"D3"},
-  {n:"North Park",d:"D3"},
-  {n:"Cortland State",d:"D3"},
-  {n:"Keene State",d:"D3"},
-  {n:"Hardin-SimmonsAmerican SW",d:"D3"},
-  {n:"York (PA)",d:"D3"},
-  {n:"Colby",d:"D3"},
-  {n:"Chapman",d:"D3"},
-  {n:"Connecticut College",d:"D3"},
-  {n:"Gettysburg",d:"D3"},
-  {n:"Western New England",d:"D3"},
-  {n:"Western Connecticut State",d:"D3"},
-  {n:"Wittenberg",d:"D3"},
-  {n:"Heidelberg",d:"D3"},
-  {n:"Drew",d:"D3"},
-  {n:"Wisconsin-Eau Claire",d:"D3"},
-  {n:"Concordia-Moorhead",d:"D3"},
-  {n:"Wabash",d:"D3"},
-  {n:"Case Western Reserve",d:"D3"},
-  {n:"Washington & Lee",d:"D3"},
-  {n:"Rhodes",d:"D3"},
-  {n:"Occidental",d:"D3"},
-  {n:"Bowdoin",d:"D3"},
-  {n:"Carnegie Mellon",d:"D3"},
-  {n:"Carroll (WI)",d:"D3"},
-  {n:"Wheaton (IL)",d:"D3"},
-  {n:"UC Santa Cruz",d:"D3"},
-  {n:"Millikin",d:"D3"},
-  {n:"Aurora",d:"D3"},
-  {n:"Washington & Jefferson",d:"D3"},
-  {n:"Albertus Magnus",d:"D3"},
-  {n:"Williams",d:"D3"},
-  {n:"Saint Joseph's (ME)",d:"D3"},
-  {n:"Stockton",d:"D3"},
-  {n:"LeTourneau",d:"D3"},
-  {n:"Rochester",d:"D3"},
-  {n:"Augustana (IL)",d:"D3"},
-  {n:"Rensselaer",d:"D3"},
-  {n:"Lynchburg",d:"D3"},
-  {n:"Transylvania",d:"D3"},
-  {n:"Wilkes",d:"D3"},
-  {n:"St. Norbert",d:"D3"},
-  {n:"Farmingdale State",d:"D3"},
-  {n:"Union (NY)",d:"D3"},
-  {n:"Muskingum",d:"D3"},
-  {n:"Oswego State",d:"D3"},
-  {n:"Olivet",d:"D3"},
-  {n:"Vassar",d:"D3"},
-  {n:"Anderson (IN)",d:"D3"},
-  {n:"Scranton",d:"D3"},
-  {n:"Yeshiva",d:"D3"},
-  {n:"California Lutheran",d:"D3"},
-  {n:"Hamline",d:"D3"},
-  {n:"Albright",d:"D3"},
-  {n:"Salve Regina",d:"D3"},
-  {n:"Milwaukee School of Engineering",d:"D3"},
-  {n:"Lancaster Bible",d:"D3"},
-  {n:"Ursinus",d:"D3"},
-  {n:"Augsburg",d:"D3"},
-  {n:"Eastern Connecticut State",d:"D3"},
-  {n:"Susquehanna",d:"D3"},
-  {n:"Rose-Hulman",d:"D3"},
-  {n:"Marymount",d:"D3"},
-  {n:"Averett",d:"D3"},
-  {n:"Puget Sound",d:"D3"},
-  {n:"Monmouth (IL)",d:"D3"},
-  {n:"North Central (IL)",d:"D3"},
-  {n:"Elizabethtown",d:"D3"},
-  {n:"NC Wesleyan",d:"D3"},
-  {n:"Whittier",d:"D3"},
-  {n:"Southern Maine",d:"D3"},
-  {n:"Stevens Institute of Technology",d:"D3"},
-  {n:"Central (IA)",d:"D3"},
-  {n:"Wartburg",d:"D3"},
-  {n:"Wheaton (MA)",d:"D3"},
-  {n:"Carleton",d:"D3"},
-  {n:"Swarthmore",d:"D3"},
-  {n:"Chatham",d:"D3"},
-  {n:"Arcadia",d:"D3"},
-  {n:"UMass Dartmouth",d:"D3"},
-  {n:"Pitt.-Greensburg",d:"D3"},
-  {n:"Marietta",d:"D3"},
-  {n:"Buena Vista",d:"D3"},
-  {n:"Clark",d:"D3"},
-  {n:"Suffolk",d:"D3"},
-  {n:"Oberlin",d:"D3"},
-  {n:"Pfeiffer",d:"D3"},
-  {n:"Saint Olaf",d:"D3"},
-  {n:"Lake Forest",d:"D3"},
-  {n:"Franklin",d:"D3"},
-  {n:"UMass Boston",d:"D3"},
-  {n:"New Jersey City",d:"D3"},
-  {n:"Colorado College",d:"D3"},
-  {n:"Franciscan",d:"D3"},
-  {n:"Wisconsin-Stout",d:"D3"},
-  {n:"Alvernia",d:"D3"},
-  {n:"Belhaven",d:"D3"},
-  {n:"Rowan",d:"D3"},
-  {n:"Lewis & Clark",d:"D3"},
-  {n:"Wilmington (OH)",d:"D3"},
-  {n:"Penn State Behrend",d:"D3"},
-  {n:"Kean",d:"D3"},
-  {n:"Moravian",d:"D3"},
-  {n:"Penn State Harrisburg",d:"D3"},
-  {n:"Hobart",d:"D3"},
-  {n:"Willamette",d:"D3"},
-  {n:"Wooster",d:"D3"},
-  {n:"Saint Vincent",d:"D3"},
-  {n:"Wisconsin-River Falls",d:"D3"},
-  {n:"Salisbury",d:"D3"},
-  {n:"Pomona-Pitzer",d:"D3"},
-  {n:"St. Lawrence",d:"D3"},
-  {n:"Mount St. Joseph",d:"D3"},
-  {n:"Webster",d:"D3"},
-  {n:"Capital",d:"D3"},
-  {n:"Schreiner",d:"D3"},
-  {n:"Albion",d:"D3"},
-  {n:"Westminster (PA)",d:"D3"},
-  {n:"Nichols",d:"D3"},
-  {n:"Westfield State",d:"D3"},
-  {n:"Ohio Wesleyan",d:"D3"},
-  {n:"DeSales",d:"D3"},
-  {n:"Misericordia",d:"D3"},
-  {n:"Shenandoah",d:"D3"},
-  {n:"Hanover",d:"D3"},
-  {n:"Middlebury",d:"D3"},
-  {n:"Marian (WI)",d:"D3"},
-  {n:"Simpson",d:"D3"},
-  {n:"Bethany Lutheran",d:"D3"},
-  {n:"Concordia (WI)",d:"D3"},
-  {n:"Kenyon",d:"D3"},
-  {n:"Pacific Lutheran",d:"D3"},
-  {n:"Nazareth",d:"D3"},
-  {n:"Centre",d:"D3"},
-  {n:"SUNY Oneonta",d:"D3"},
-  {n:"Illinois College",d:"D3"},
-  {n:"Rutgers-Camden",d:"D3"},
-  {n:"Rhode Island College",d:"D3"},
-  {n:"Baldwin Wallace",d:"D3"},
-  {n:"Howard PayneAmerican SW",d:"D3"},
-  {n:"Lasell",d:"D3"},
-  {n:"Millsaps",d:"D3"},
-  {n:"Emerson",d:"D3"},
-  {n:"Ithaca",d:"D3"},
-  {n:"Maine Farmington",d:"D3"},
-  {n:"Springfield",d:"D3"},
-  {n:"Hamilton",d:"D3"},
-  {n:"Utica",d:"D3"},
-  {n:"Eastern Univ",d:"D3"},
-  {n:"Linfield",d:"D3"},
-  {n:"McDaniel",d:"D3"},
-  {n:"Brockport St",d:"D3"},
-  {n:"SUNY Polytechnic",d:"D3"},
-  {n:"North Central (MN)",d:"D3"},
-  {n:"Southern Virginia",d:"D3"},
-  {n:"Gwynedd-Mercy",d:"D3"},
-  {n:"Luther",d:"D3"},
-  {n:"Neumann",d:"D3"},
-  {n:"Skidmore",d:"D3"},
-  {n:"Lawrence",d:"D3"},
-  {n:"Muhlenberg",d:"D3"},
-  {n:"Bethel (MN)",d:"D3"},
-  {n:"Hartford",d:"D3"},
-  {n:"Huntingdon",d:"D3"},
-  {n:"Centenary (LA)",d:"D3"},
-  {n:"Whitman",d:"D3"},
-  {n:"Geneseo State",d:"D3"},
-  {n:"Cairn",d:"D3"},
-  {n:"Russell Sage",d:"D3"},
-  {n:"Berry",d:"D3"},
-  {n:"McMurry",d:"D3"},
-  {n:"Worcester State",d:"D3"},
-  {n:"Pacific (OR)",d:"D3"},
-  {n:"E Texas BapAmerican SW",d:"D3"},
-  {n:"LaGrange",d:"D3"},
-  {n:"Stevenson",d:"D3"},
-  {n:"Texas Lutheran",d:"D3"},
-  {n:"Southwestern (TX)",d:"D3"},
-  {n:"Ramapo",d:"D3"},
-  {n:"Widener",d:"D3"},
-  {n:"Notre Dame (MD)",d:"D3"},
-  {n:"University of Dallas",d:"D3"},
-  {n:"La Roche",d:"D3"},
-  {n:"Pitt-Bradford",d:"D3"},
-  {n:"Emmanuel (MA)",d:"D3"},
-  {n:"Eastern Mennonite",d:"D3"},
-  {n:"Roger Williams",d:"D3"},
-  {n:"Lyon",d:"D3"},
-  {n:"Lehman",d:"D3"},
-  {n:"Juniata",d:"D3"},
-  {n:"Dickinson",d:"D3"},
-  {n:"Piedmont",d:"D3"},
-  {n:"Husson",d:"D3"},
-  {n:"Clarkson",d:"D3"},
-  {n:"Mississippi University for Women",d:"D3"},
-  {n:"Minnesota Morris",d:"D3"},
-  {n:"Crown (MN)",d:"D3"},
-  {n:"Benedictine (IL)",d:"D3"},
-  {n:"Austin College",d:"D3"},
-  {n:"Salem State",d:"D3"},
-  {n:"Grove City",d:"D3"},
-  {n:"Bridgewater (VA)",d:"D3"},
-  {n:"Wisconsin Lutheran",d:"D3"},
-  {n:"Sewanee",d:"D3"},
-  {n:"Macalester",d:"D3"},
-  {n:"Rockford",d:"D3"},
-  {n:"Allegheny",d:"D3"},
-  {n:"Delaware Valley",d:"D3"},
-  {n:"Saint John Fisher",d:"D3"},
-  {n:"Berea",d:"D3"},
-  {n:"MIT",d:"D3"},
-  {n:"Bluffton",d:"D3"},
-  {n:"Mary Baldwin",d:"D3"},
-  {n:"Coast Guard Academy",d:"D3"},
-  {n:"SUNY New Paltz",d:"D3"},
-  {n:"Plattsburgh State",d:"D3"},
-  {n:"St. Scholastica",d:"D3"},
-  {n:"Haverford",d:"D3"},
-  {n:"Ripon",d:"D3"},
-  {n:"Hilbert",d:"D3"},
-  {n:"Rochester Institute of Technology",d:"D3"},
-  {n:"Geneva",d:"D3"},
-  {n:"Bethany (WV)",d:"D3"},
-  {n:"Spalding",d:"D3"},
-  {n:"Cornell (IA)",d:"D3"},
-  {n:"Knox",d:"D3"},
-  {n:"Keuka",d:"D3"},
-  {n:"Regis (MA)",d:"D3"},
-  {n:"Rivier",d:"D3"},
-  {n:"Penn State Altoona",d:"D3"},
-  {n:"Sarah Lawrence",d:"D3"},
-  {n:"Dean",d:"D3"},
-  {n:"La Verne",d:"D3"},
-  {n:"Methodist",d:"D3"},
-  {n:"Wisconsin-Superior",d:"D3"},
-  {n:"Rutgers-Newark",d:"D3"},
-  {n:"Plymouth State",d:"D3"},
-  {n:"New England",d:"D3"},
-  {n:"Lycoming",d:"D3"},
-  {n:"Adrian",d:"D3"},
-  {n:"Greensboro",d:"D3"},
-  {n:"William Paterson",d:"D3"},
-  {n:"George Fox",d:"D3"},
-  {n:"Alma",d:"D3"},
-  {n:"Marywood",d:"D3"},
-  {n:"Concordia (IL)",d:"D3"},
-  {n:"Illinois Tech",d:"D3"},
-  {n:"Lakeland",d:"D3"},
-  {n:"Lebanon Valley",d:"D3"},
-  {n:"Penn State Brandywine",d:"D3"},
-  {n:"Northwestern (MN)",d:"D3"},
-  {n:"Washington (MD)",d:"D3"},
-  {n:"Asbury",d:"D3"},
-  {n:"Norwich",d:"D3"},
-  {n:"Hiram",d:"D3"},
-  {n:"Brevard",d:"D3"},
-  {n:"Randolph",d:"D3"},
-  {n:"Framingham State",d:"D3"},
-  {n:"King's (PA)",d:"D3"},
-  {n:"Goucher",d:"D3"},
-  {n:"Manchester",d:"D3"},
-  {n:"University of the Ozarks",d:"D3"},
-  {n:"Fairleigh Dickinson-Florham",d:"D3"},
-  {n:"Manhattanville",d:"D3"},
-  {n:"Covenant",d:"D3"},
-  {n:"SUNY Maritime",d:"D3"},
-  {n:"Wilson",d:"D3"},
-  {n:"Greenville",d:"D3"},
-  {n:"Fitchburg State",d:"D3"},
-  {n:"Mitchell",d:"D3"},
-  {n:"Martin Luther",d:"D3"},
-  {n:"Purchase",d:"D3"},
-  {n:"Edgewood",d:"D3"},
-  {n:"Centenary (NJ)",d:"D3"},
-  {n:"Beloit",d:"D3"},
-  {n:"Thiel",d:"D3"},
-  {n:"Wentworth Institute",d:"D3"},
-  {n:"Peace",d:"D3"},
-  {n:"Bridgewater State",d:"D3"},
-  {n:"St. Mary's (MD)",d:"D3"},
-  {n:"Waynesburg",d:"D3"},
-  {n:"Morrisville State",d:"D3"},
-  {n:"Oglethorpe",d:"D3"},
-  {n:"Baruch",d:"D3"},
-  {n:"Gordon",d:"D3"},
-  {n:"Blackburn",d:"D3"},
-  {n:"Maine-Presque Isle",d:"D3"},
-  {n:"St. Joseph's (LI)",d:"D3"},
-  {n:"Castleton",d:"D3"},
-  {n:"Messiah",d:"D3"},
-  {n:"Hartwick",d:"D3"},
-  {n:"Kalamazoo",d:"D3"},
-  {n:"Buffalo State",d:"D3"},
-  {n:"Massachusetts College of Liberal Arts",d:"D3"},
-  {n:"Pratt Institute",d:"D3"},
-  {n:"Caltech",d:"D3"},
-  {n:"Immaculata",d:"D3"},
-  {n:"Maine Maritime",d:"D3"},
-  {n:"Eureka",d:"D3"},
-  {n:"Houghton",d:"D3"},
-  {n:"Earlham",d:"D3"},
-  {n:"Elmira",d:"D3"},
-  {n:"Our Lady of the Elms",d:"D3"},
-  {n:"Alfred",d:"D3"},
-  {n:"SUNY Canton",d:"D3"},
-  {n:"Westminster (MO)",d:"D3"},
-  {n:"Curry",d:"D3"},
-  {n:"Anna Maria",d:"D3"},
-  {n:"SUNY Cobleskill",d:"D3"},
-  {n:"St. Mary's (MN)",d:"D3"},
-  {n:"Thomas (ME)",d:"D3"},
-  {n:"John Jay",d:"D3"},
-  {n:"Old Westbury",d:"D3"},
-  {n:"Penn State Abington",d:"D3"},
-  {n:"St. Elizabeth",d:"D3"},
-  {n:"Brooklyn College",d:"D3"},
-  {n:"Dominican (IL)",d:"D3"},
-  {n:"Keystone",d:"D3"},
-  {n:"Johnson & Wales (NC)",d:"D3"},
-  {n:"SUNY Delhi",d:"D3"},
-  {n:"Alfred St",d:"D3"},
-  {n:"Regent",d:"D3"},
-  {n:"City College of New York",d:"D3"},
-  {n:"St. Joseph's (NY)",d:"D3"},
-  {n:"Johnson & Wales (RI)",d:"D3"},
-  {n:"New England College",d:"D3"},
-  {n:"Merchant Marine",d:"D3"},
-  {n:"Mount Aloysius",d:"D3"},
-  {n:"Carlow",d:"D3"},
-  {n:"Warren Wilson",d:"D3"},
-  {n:"York (NY)",d:"D3"},
-  {n:"Bard",d:"D3"},
-  {n:"Fredonia State",d:"D3"},
-  {n:"Rosemont",d:"D3"},
-  {n:"Hendrix",d:"D3"},
-  {n:"Valley Forge",d:"D3"},
-  {n:"Principia",d:"D3"},
-  {n:"Pennsylvania College of Technology",d:"D3"},
-  {n:"Penn State Berks",d:"D3"},
-  {n:"Potsdam State",d:"D3"},
-  {n:"Colby-Sawyer",d:"D3"},
-  {n:"Northern Vermont-Lyndon",d:"D3"},
-  {n:"Mount St. Vincent",d:"D3"},
-  {n:"Hunter",d:"D3"},
-  {n:"Gallaudet",d:"D3"},
-  {n:"Mount St. Mary (NY)",d:"D3"},
-  {n:"Lesley",d:"D3"},
-  {n:"Maranatha Baptist",d:"D3"},
-  {n:"Northern Vermont-Johnson",d:"D3"},
-  {n:"Medgar Evers",d:"D3"},
-  {n:"Team",d:"JUCO"},
-  {n:"Southern Idaho",d:"JUCO"},
-  {n:"Howard Col",d:"JUCO"},
-  {n:"Snow College",d:"JUCO"},
-  {n:"Indian Hills CC",d:"JUCO"},
-  {n:"Midland TX",d:"JUCO"},
-  {n:"Trinity Valley CC",d:"JUCO"},
-  {n:"McLennan CC",d:"JUCO"},
-  {n:"Chipola",d:"JUCO"},
-  {n:"New Mexico JC",d:"JUCO"},
-  {n:"NW Florida St",d:"JUCO"},
-  {n:"South Plains",d:"JUCO"},
-  {n:"Gulf Coast St",d:"JUCO"},
-  {n:"Daytona St",d:"JUCO"},
-  {n:"Pima CC",d:"JUCO"},
-  {n:"Tallahassee St",d:"JUCO"},
-  {n:"Odessa",d:"JUCO"},
-  {n:"Vincennes",d:"JUCO"},
-  {n:"Walters St",d:"JUCO"},
-  {n:"Butler Co-KS",d:"JUCO"},
-  {n:"Des Moines CC",d:"JUCO"},
-  {n:"Barton Co",d:"JUCO"},
-  {n:"Monroe-NR",d:"JUCO"},
-  {n:"Kilgore",d:"JUCO"},
-  {n:"FL Southwestern",d:"JUCO"},
-  {n:"E Florida St",d:"JUCO"},
-  {n:"Jones Col",d:"JUCO"},
-  {n:"Eastern Utah",d:"JUCO"},
-  {n:"Coffeyville CC",d:"JUCO"},
-  {n:"Panola",d:"JUCO"},
-  {n:"Cowley Co",d:"JUCO"},
-  {n:"Dodge City CC",d:"JUCO"},
-  {n:"Mineral Area",d:"JUCO"},
-  {n:"John Logan",d:"JUCO"},
-  {n:"Murray St CC",d:"JUCO"},
-  {n:"Itawamba CC",d:"JUCO"},
-  {n:"Iowa Cent",d:"JUCO"},
-  {n:"Pensacola St",d:"JUCO"},
-  {n:"Eastern Arizona",d:"JUCO"},
-  {n:"North Idaho",d:"JUCO"},
-  {n:"AZ Western",d:"JUCO"},
-  {n:"Johnson Co",d:"JUCO"},
-  {n:"Moberly Area",d:"JUCO"},
-  {n:"Cloud Co",d:"JUCO"},
-  {n:"Seward County CC",d:"JUCO"},
-  {n:"Lee TX",d:"JUCO"},
-  {n:"Palm Beach St",d:"JUCO"},
-  {n:"Collin Co",d:"JUCO"},
-  {n:"Blinn",d:"JUCO"},
-  {n:"Garden City CC",d:"JUCO"},
-  {n:"MS Gulf Coast",d:"JUCO"},
-  {n:"Western Texas",d:"JUCO"},
-  {n:"Angelina",d:"JUCO"},
-  {n:"Cochise College",d:"JUCO"},
-  {n:"Ellsworth CC",d:"JUCO"},
-  {n:"Tyler JC",d:"JUCO"},
-  {n:"Connors St",d:"JUCO"},
-  {n:"Milwaukee Tech",d:"JUCO"},
-  {n:"Shelton St",d:"JUCO"},
-  {n:"Three Rivers",d:"JUCO"},
-  {n:"Brunswick CC",d:"JUCO"},
-  {n:"Columbia St",d:"JUCO"},
-  {n:"Parkland",d:"JUCO"},
-  {n:"Ft Hays Tech NW",d:"JUCO"},
-  {n:"Salt Lake CC",d:"JUCO"},
-  {n:"Indian River",d:"JUCO"},
-  {n:"Kirkwood CC",d:"JUCO"},
-  {n:"Hutchinson CC",d:"JUCO"},
-  {n:"Danville CC IL",d:"JUCO"},
-  {n:"Santa Fe CC",d:"JUCO"},
-  {n:"Dawson CC",d:"JUCO"},
-  {n:"Navarro",d:"JUCO"},
-  {n:"N OK-Enid",d:"JUCO"},
-  {n:"Seminole St",d:"JUCO"},
-  {n:"Holmes CC",d:"JUCO"},
-  {n:"Independence CC",d:"JUCO"},
-  {n:"NE OK A&M",d:"JUCO"},
-  {n:"Miami-Dade",d:"JUCO"},
-  {n:"Iowa Western CC",d:"JUCO"},
-  {n:"Pearl River CC",d:"JUCO"},
-  {n:"W Oklahoma St",d:"JUCO"},
-  {n:"Lamar CC",d:"JUCO"},
-  {n:"SW Mississippi",d:"JUCO"},
-  {n:"Gaston",d:"JUCO"},
-  {n:"Eastern OK St",d:"JUCO"},
-  {n:"Weatherford",d:"JUCO"},
-  {n:"Coahoma CC",d:"JUCO"},
-  {n:"Paris JC",d:"JUCO"},
-  {n:"Temple Col",d:"JUCO"},
-  {n:"NE MS CC",d:"JUCO"},
-  {n:"Bishop St",d:"JUCO"},
-  {n:"Ranger",d:"JUCO"},
-  {n:"Northwest WY",d:"JUCO"},
-  {n:"Northeastern JC",d:"JUCO"},
-  {n:"Laramie Co",d:"JUCO"},
-  {n:"Cent Georgia Tech",d:"JUCO"},
-  {n:"NM Military",d:"JUCO"},
-  {n:"North Platte CC",d:"JUCO"},
-  {n:"S Georgia St",d:"JUCO"},
-  {n:"Hinds CC",d:"JUCO"},
-  {n:"Frank Phillips",d:"JUCO"},
-  {n:"Trinidad St JC",d:"JUCO"},
-  {n:"Southern Nevada",d:"JUCO"},
-  {n:"Mid-South Community College",d:"JUCO"},
-  {n:"Davidson Co CC",d:"JUCO"},
-  {n:"Henry Ford CC",d:"JUCO"},
-  {n:"South Mtn",d:"JUCO"},
-  {n:"N Central MO",d:"JUCO"},
-  {n:"S Suburban",d:"JUCO"},
-  {n:"N OK-Tonkawa",d:"JUCO"},
-  {n:"McCook CC",d:"JUCO"},
-  {n:"Casper College",d:"JUCO"},
-  {n:"E Mississippi CC",d:"JUCO"},
-  {n:"Harcum Col",d:"JUCO"},
-  {n:"Rock Valley",d:"JUCO"},
-  {n:"Monroe CC",d:"JUCO"},
-  {n:"Snead St",d:"JUCO"},
-  {n:"ND St Science",d:"JUCO"},
-  {n:"Wabash Val",d:"JUCO"},
-  {n:"Schoolcraft",d:"JUCO"},
-  {n:"Rend Lake",d:"JUCO"},
-  {n:"Coastal AL-Mon",d:"JUCO"},
-  {n:"State Fair CC",d:"JUCO"},
-  {n:"Bry & Strat WI",d:"JUCO"},
-  {n:"S Georgia Tech",d:"JUCO"},
-  {n:"Southern-Shreve",d:"JUCO"},
-  {n:"Triton Col",d:"JUCO"},
-  {n:"Clarendon",d:"JUCO"},
-  {n:"NW Mississippi",d:"JUCO"},
-  {n:"Hillsborough CC",d:"JUCO"},
-  {n:"Calhoun CC",d:"JUCO"},
-  {n:"Lamar St",d:"JUCO"},
-  {n:"Macomb CC",d:"JUCO"},
-  {n:"Kankakee CC",d:"JUCO"},
-  {n:"Southeastern CC",d:"JUCO"},
-  {n:"C Arizona",d:"JUCO"},
-  {n:"Wallace St",d:"JUCO"},
-  {n:"SW Illinois",d:"JUCO"},
-  {n:"Copiah-Lincoln",d:"JUCO"},
-  {n:"SW Chr TX",d:"JUCO"},
-  {n:"Caldwell CC Tech",d:"JUCO"},
-  {n:"Pratt CC",d:"JUCO"},
-  {n:"Richland",d:"JUCO"},
-  {n:"Lincoln Trail",d:"JUCO"},
-  {n:"USC Salkehatchie",d:"JUCO"},
-  {n:"Orange Co",d:"JUCO"},
-  {n:"Lansing CC",d:"JUCO"},
-  {n:"Redlands CC",d:"JUCO"},
-  {n:"Gillette",d:"JUCO"},
-  {n:"Oakland CC",d:"JUCO"},
-  {n:"Lawson St",d:"JUCO"},
-  {n:"Florida St-Jax",d:"JUCO"},
-  {n:"N Arkansas",d:"JUCO"},
-  {n:"Allegany MD",d:"JUCO"},
-  {n:"Colby CC",d:"JUCO"},
-  {n:"Gadsden St CC",d:"JUCO"},
-  {n:"CCBC-Dundalk",d:"JUCO"},
-  {n:"Scottsdale CC",d:"JUCO"},
-  {n:"Southeast CC",d:"JUCO"},
-  {n:"Shawnee CC",d:"JUCO"},
-  {n:"Kalamazoo Val",d:"JUCO"},
-  {n:"North Lake",d:"JUCO"},
-  {n:"Forsyth Tech CC",d:"JUCO"},
-  {n:"Allen Co",d:"JUCO"},
-  {n:"Kansas City KS",d:"JUCO"},
-  {n:"Northeast CC",d:"JUCO"},
-  {n:"Highland CC KS",d:"JUCO"},
-  {n:"Bossier Parish",d:"JUCO"},
-  {n:"S Union St",d:"JUCO"},
-  {n:"Mid-Michigan Community College",d:"JUCO"},
-  {n:"Glendale AZ",d:"JUCO"},
-  {n:"St Clair Co",d:"JUCO"},
-  {n:"Niagara Co",d:"JUCO"},
-  {n:"Eastfield Col",d:"JUCO"},
-  {n:"Olive-Harvey",d:"JUCO"},
-  {n:"St Petersburg",d:"JUCO"},
-  {n:"Chand-Gilbert",d:"JUCO"},
-  {n:"Riverland CC",d:"JUCO"},
-  {n:"Grayson",d:"JUCO"},
-  {n:"W Nebraska CC",d:"JUCO"},
-  {n:"SW MO St-WP",d:"JUCO"},
-  {n:"Sauk Valley CC",d:"JUCO"},
-  {n:"W Wyoming CC",d:"JUCO"},
-  {n:"Chatt St Tech",d:"JUCO"},
-  {n:"Waubonsee CC",d:"JUCO"},
-  {n:"Roane St",d:"JUCO"},
-  {n:"Prince George's",d:"JUCO"},
-  {n:"Yavapai",d:"JUCO"},
-  {n:"IL Central",d:"JUCO"},
-  {n:"Cent Wyoming",d:"JUCO"},
-  {n:"Bry & Strat VA",d:"JUCO"},
-  {n:"Chesapeake",d:"JUCO"},
-  {n:"Baton Rouge CC",d:"JUCO"},
-  {n:"Fort Scott CC",d:"JUCO"},
-  {n:"Malcolm X",d:"JUCO"},
-  {n:"N Iowa CC",d:"JUCO"},
-  {n:"Lakeland CC",d:"JUCO"},
-  {n:"Madison Col",d:"JUCO"},
-  {n:"W Iowa Tech",d:"JUCO"},
-  {n:"Mesa CC",d:"JUCO"},
-  {n:"Bay Col",d:"JUCO"},
-  {n:"N Essex CC",d:"JUCO"},
-  {n:"Wallace CC-Selma",d:"JUCO"},
-  {n:"Richard Bland",d:"JUCO"},
-  {n:"SAU Tech",d:"JUCO"},
-  {n:"Howard CC MD",d:"JUCO"},
-  {n:"Kaskaskia",d:"JUCO"},
-  {n:"Motlow St",d:"JUCO"},
-  {n:"Lake Land IL",d:"JUCO"},
-  {n:"John Wood CC",d:"JUCO"},
-  {n:"Polk CC",d:"JUCO"},
-  {n:"Salem CC",d:"JUCO"},
-  {n:"Delgado CC",d:"JUCO"},
-  {n:"Phillips CCUA",d:"JUCO"},
-  {n:"Neosho Co",d:"JUCO"},
-  {n:"Morton",d:"JUCO"},
-  {n:"Harford CC",d:"JUCO"},
-  {n:"Gordon GA",d:"JUCO"},
-  {n:"East Central CC",d:"JUCO"},
-  {n:"Williston St",d:"JUCO"},
-  {n:"Lincoln Land",d:"JUCO"},
-  {n:"SE Ark",d:"JUCO"},
-  {n:"Moraine Val",d:"JUCO"},
-  {n:"Raritan Val",d:"JUCO"},
-  {n:"Potomac St-WVU",d:"JUCO"},
-  {n:"Highland CC IL",d:"JUCO"},
-  {n:"Wake Tech",d:"JUCO"},
-  {n:"Cent CC-Columbus",d:"JUCO"},
-  {n:"Hagerstown CC",d:"JUCO"},
-  {n:"Edison CC",d:"JUCO"},
-  {n:"Reid St",d:"JUCO"},
-  {n:"MCC Maple Woods",d:"JUCO"},
-  {n:"Joliet JC",d:"JUCO"},
-  {n:"Coastal AL-BM",d:"JUCO"},
-  {n:"Albany Tech",d:"JUCO"},
-  {n:"Hill Col",d:"JUCO"},
-  {n:"South Arkansas",d:"JUCO"},
-  {n:"Coastal Bend",d:"JUCO"},
-  {n:"Georgia Highlands",d:"JUCO"},
-  {n:"Eastern Wyoming",d:"JUCO"},
-  {n:"East Georgia Col",d:"JUCO"},
-  {n:"Meridian CC",d:"JUCO"},
-  {n:"Otero JC",d:"JUCO"},
-  {n:"Spoon River College",d:"JUCO"},
-  {n:"Black Hawk-M",d:"JUCO"},
-  {n:"Montgomery-R",d:"JUCO"},
-  {n:"Cape Fear CC",d:"JUCO"},
-  {n:"Iowa Lakes CC",d:"JUCO"},
-  {n:"Miles CC",d:"JUCO"},
-  {n:"StL CC-Meramec",d:"JUCO"},
-  {n:"Lurleen Wallace",d:"JUCO"},
-  {n:"Catawba Val",d:"JUCO"},
-  {n:"Ridgewater",d:"JUCO"},
-  {n:"National Park",d:"JUCO"},
-  {n:"Fayetteville Tech",d:"JUCO"},
-  {n:"Colorado NW",d:"JUCO"},
-  {n:"Cleveland St CC",d:"JUCO"},
-  {n:"Carl Sandburg",d:"JUCO"},
-  {n:"Cuyahoga CC",d:"JUCO"},
-  {n:"Grand Rapids CC",d:"JUCO"},
-  {n:"Co Col Morris",d:"JUCO"},
-  {n:"Pellissippi St",d:"JUCO"},
-  {n:"Elgin CC",d:"JUCO"},
-  {n:"Cent Carolina CC",d:"JUCO"},
-  {n:"Montgomery Co CC",d:"JUCO"},
-  {n:"Lake Michigan",d:"JUCO"},
-  {n:"Brookhaven",d:"JUCO"},
-  {n:"Wayne Co",d:"JUCO"},
-  {n:"Olney",d:"JUCO"},
-  {n:"Southwestern CC",d:"JUCO"},
-  {n:"Cleveland CC",d:"JUCO"},
-  {n:"Cossatot CC",d:"JUCO"},
-  {n:"SW Tennessee",d:"JUCO"},
-  {n:"Rockland CC",d:"JUCO"},
-  {n:"MS Delta",d:"JUCO"},
-  {n:"Mercer Co",d:"JUCO"},
-  {n:"Lewis & Clark CC",d:"JUCO"},
-  {n:"CCBC Catonsville",d:"JUCO"},
-  {n:"Virginia Peninsula",d:"JUCO"},
-  {n:"Col of Dupage",d:"JUCO"},
-  {n:"Volunteer St",d:"JUCO"},
-  {n:"Chattahoochee Val",d:"JUCO"},
-  {n:"ManorUSCAA-1",d:"JUCO"},
-  {n:"Northampton CC",d:"JUCO"},
-  {n:"Enterprise St",d:"JUCO"},
-  {n:"Dutchess CC",d:"JUCO"},
-  {n:"Kellogg CC",d:"JUCO"},
-  {n:"Shorter AR",d:"JUCO"},
-  {n:"Garrett",d:"JUCO"},
-  {n:"Southern MD",d:"JUCO"},
-  {n:"Pasco-Hernando",d:"JUCO"},
-  {n:"FL Gateway",d:"JUCO"},
-  {n:"Dakota-Bottineau",d:"JUCO"},
-  {n:"Genesee CC",d:"JUCO"},
-  {n:"McHenry Co",d:"JUCO"},
-  {n:"Cecil Col",d:"JUCO"},
-  {n:"Dyersburg St",d:"JUCO"},
-  {n:"Herkimer Co",d:"JUCO"},
-  {n:"Anoka Ramsey",d:"JUCO"},
-  {n:"Erie CC",d:"JUCO"},
-  {n:"Kishwaukee CC",d:"JUCO"},
-  {n:"Sandhills CC",d:"JUCO"},
-  {n:"Lake Co",d:"JUCO"},
-  {n:"Ark St-Newport",d:"JUCO"},
-  {n:"Bevill-Fay",d:"JUCO"},
-  {n:"Mohawk Val",d:"JUCO"},
-  {n:"Marshalltown CC",d:"JUCO"},
-  {n:"N Country CC",d:"JUCO"},
-  {n:"Glen Oaks CC",d:"JUCO"},
-  {n:"Middlesex Co",d:"JUCO"},
-  {n:"Union Co",d:"JUCO"},
-  {n:"Dakota Co Tech",d:"JUCO"},
-  {n:"Lackawanna",d:"JUCO"},
-  {n:"Mott CC",d:"JUCO"},
-  {n:"Marion Mil",d:"JUCO"},
-  {n:"Terra St",d:"JUCO"},
-  {n:"Central Lakes",d:"JUCO"},
-  {n:"Prairie St",d:"JUCO"},
-  {n:"Jamestown CC",d:"JUCO"},
-  {n:"Jackson St CC",d:"JUCO"},
-  {n:"SW Michigan",d:"JUCO"},
-  {n:"Lake Region",d:"JUCO"},
-  {n:"Frederick CC",d:"JUCO"},
-  {n:"Quincy CC",d:"JUCO"},
-  {n:"St Cloud Tech",d:"JUCO"},
-  {n:"Brookdale CC",d:"JUCO"},
-  {n:"Bunker Hill CC",d:"JUCO"},
-  {n:"Louisburg",d:"JUCO"},
-  {n:"So Crescent Tech",d:"JUCO"},
-  {n:"Massasoit CC",d:"JUCO"},
-  {n:"Essex CC",d:"JUCO"},
-  {n:"Jefferson Col",d:"JUCO"},
-  {n:"Daley",d:"JUCO"},
-  {n:"Illinois Val",d:"JUCO"},
-  {n:"Montcalm CC",d:"JUCO"},
-  {n:"Delta Col",d:"JUCO"},
-  {n:"Labette CC",d:"JUCO"},
-  {n:"Cedar Valley",d:"JUCO"},
-  {n:"Kennedy-King",d:"JUCO"},
-  {n:"Monroe-Bronx",d:"JUCO"},
-  {n:"PA Highlands CC",d:"JUCO"},
-  {n:"MN St CTC",d:"JUCO"},
-  {n:"United Tribes",d:"JUCO"},
-  {n:"Northland CTC",d:"JUCO"},
-  {n:"Rochester C&T",d:"JUCO"},
-  {n:"Clark St",d:"JUCO"},
-  {n:"Mtn View",d:"JUCO"},
-  {n:"Guilford Tech CC",d:"JUCO"},
-  {n:"Phoenix Col",d:"JUCO"},
-  {n:"Westchester CC",d:"JUCO"},
-  {n:"Gogebic CC",d:"JUCO"},
-  {n:"MN West C&T",d:"JUCO"},
-  {n:"Camden Co",d:"JUCO"},
-  {n:"Muskegon CC",d:"JUCO"},
-  {n:"CC Allegheny-B",d:"JUCO"},
-  {n:"Baltimore City CC",d:"JUCO"},
-  {n:"Denmark Tech",d:"JUCO"},
-  {n:"DE Tech CC",d:"JUCO"},
-  {n:"Truman Col",d:"JUCO"},
-  {n:"Adirondack CC",d:"JUCO"},
-  {n:"Hostos CC",d:"JUCO"},
-  {n:"Tompkins Cortland",d:"JUCO"},
-  {n:"Andrew Col",d:"JUCO"},
-  {n:"Onondaga CC",d:"JUCO"},
-  {n:"Queensborough",d:"JUCO"},
-  {n:"Ocean Co",d:"JUCO"},
-  {n:"Oakton CC",d:"JUCO"},
-  {n:"CC of RI",d:"JUCO"},
-  {n:"Oxford of Emory",d:"JUCO"},
-  {n:"CC Beaver Co",d:"JUCO"},
-  {n:"Atlantic Cape CC",d:"JUCO"},
-  {n:"Pitt CC",d:"JUCO"},
-  {n:"Nassau CC",d:"JUCO"},
-  {n:"Anne Arundel",d:"JUCO"},
-  {n:"Owens CC",d:"JUCO"},
-  {n:"Philadelphia CC",d:"JUCO"},
-  {n:"Community Chr MI",d:"JUCO"},
-  {n:"Rainy River CC",d:"JUCO"},
-  {n:"Bergen CC",d:"JUCO"},
-  {n:"Ancilla",d:"JUCO"},
-  {n:"Roxbury CC",d:"JUCO"},
-  {n:"Patrick Henry CC",d:"JUCO"},
-  {n:"Hudson Val",d:"JUCO"},
-  {n:"Hocking",d:"JUCO"},
-  {n:"Bristol CC",d:"JUCO"},
-  {n:"Mass Bay CC",d:"JUCO"},
-  {n:"Kirtland CC",d:"JUCO"},
-  {n:"Stevens Tech PA",d:"JUCO"},
-  {n:"Harper",d:"JUCO"},
-  {n:"Sprfld Tech CC",d:"JUCO"},
-  {n:"Fulton-Mont",d:"JUCO"},
-  {n:"Jackson CC",d:"JUCO"},
-  {n:"Mesabi Range",d:"JUCO"},
-  {n:"Sullivan Co",d:"JUCO"},
-  {n:"Butler Co-PA",d:"JUCO"},
-  {n:"RCSJ-Gloucester",d:"JUCO"},
-  {n:"Broome CC",d:"JUCO"},
-  {n:"Paul D Camp",d:"JUCO"},
-  {n:"Bor Manhattan",d:"JUCO"},
-  {n:"Corning CC",d:"JUCO"},
-  {n:"Southwest VA CC",d:"JUCO"},
-  {n:"Harrisburg Area CC",d:"JUCO"},
-  {n:"Lorain Co CC",d:"JUCO"},
-  {n:"B&S OH NJCAA",d:"JUCO"},
-  {n:"Cayuga CC",d:"JUCO"},
-  {n:"Finger Lakes CC",d:"JUCO"},
-  {n:"Quinsigamond",d:"JUCO"},
-  {n:"Hibbing CC",d:"JUCO"},
-  {n:"Tidewater CC",d:"JUCO"},
-  {n:"Rowan College of South Jersey",d:"JUCO"},
-  {n:"UConn-AP",d:"JUCO"},
-  {n:"Westmoreland Co",d:"JUCO"},
-  {n:"Sussex Co CC",d:"JUCO"},
-  {n:"Clinton CC (NY)",d:"JUCO"},
-  {n:"Bucks Co CCUSCAA-2",d:"JUCO"},
-  {n:"Blackhawk Tech",d:"JUCO"},
-  {n:"Passaic Co",d:"JUCO"},
-  {n:"Wilbur Wright",d:"JUCO"},
-  {n:"N Cent Michigan",d:"JUCO"},
-  {n:"Jefferson CC",d:"JUCO"},
-  {n:"Alpena CC",d:"JUCO"},
-  {n:"LaGuardia CC",d:"JUCO"},
-  {n:"Community Chr CA",d:"JUCO"},
-  {n:"Ulster Co",d:"JUCO"},
-  {n:"Vermilion CC",d:"JUCO"},
-  {n:"Kingsborough",d:"JUCO"},
-  {n:"Delaware Co CC",d:"JUCO"},
-  {n:"Suffolk County CC",d:"JUCO"},
-  {n:"Luzerne Co CC",d:"JUCO"},
-  {n:"Itasca CC",d:"JUCO"},
-  {n:"Holyoke CC",d:"JUCO"},
-  {n:"Johnston CC",d:"JUCO"},
-  {n:"Bronx CC",d:"JUCO"}
-];
+        data = resp.json()
+        # Roster response has 'athletes' array
+        athletes = data.get('athletes', [])
+        # Sometimes nested under position groups
+        if not athletes:
+            for group in data.get('coach', []):
+                athletes.extend(group.get('athletes', []))
 
-let selectedSchool = null;
-let filtered = [];
+        player_id = None
+        height_inches = None
 
-const BENCHMARKS = {
-  D1: 'Duke (D1)',
-  D2: 'Washburn (D2)',
-  D3: 'Emory (D3)',
-  NAIA: 'Emory (D3)',
-  JUCO: 'Emory (D3)',
-};
+        for athlete in athletes:
+            full_name = athlete.get('fullName', '')
+            if name_matches(full_name, player_name) or name_matches(player_name, full_name):
+                player_id = str(athlete.get('id', ''))
+                # ESPN height comes as display string like "6'5\""
+                ht_display = athlete.get('displayHeight', '')
+                if ht_display:
+                    height_inches = parse_height(ht_display)
+                # Also try numeric height in inches
+                if not height_inches:
+                    ht = athlete.get('height')
+                    if ht:
+                        try: height_inches = int(round(float(ht)))
+                        except: pass
+                break
 
-const DIV_COLORS = {D1:'#a855f7', D2:'#3b82f6', D3:'#10b981', NAIA:'#f97316', JUCO:'#eab308'};
+        if not player_id:
+            return None, None, f"Player '{player_name}' not found on ESPN roster"
 
-function onSearch(val) {
-  selectedSchool = null;
-  document.getElementById('selected-pill').classList.remove('show');
-  document.getElementById('search-wrap').style.display = '';
-  document.getElementById('div-detected').classList.remove('show');
-  document.getElementById('enter-btn').classList.remove('show');
+        # Get player season statistics
+        stats_url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/athletes/{player_id}/statistics/0"
+        sresp = requests.get(stats_url, headers=HEADERS, timeout=10)
+        if sresp.status_code != 200:
+            # Try without the /0
+            stats_url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/athletes/{player_id}/statistics"
+            sresp = requests.get(stats_url, headers=HEADERS, timeout=10)
+        if sresp.status_code != 200:
+            return None, height_inches, "ESPN stats unavailable"
 
-  const q = val.trim().toLowerCase();
-  if (q.length < 1) { closeDD(); return; }
+        sdata = sresp.json()
+        cats = sdata.get('splits', {}).get('categories', [])
+        raw = {}
+        for cat in cats:
+            for stat in cat.get('stats', []):
+                raw[stat.get('name', '')] = stat.get('value', 0)
 
-  filtered = SCHOOLS.filter(s => s.n.toLowerCase().includes(q)).slice(0, 15);
-  const dd = document.getElementById('school-dropdown');
-  dd.innerHTML = filtered.map((s, i) =>
-    `<div class="school-opt" onclick="selectSchool(${i})">
-      <span>${s.n}</span>
-      <span class="div-badge ${s.d}">${s.d}</span>
-    </div>`
-  ).join('');
-  dd.style.display = filtered.length ? 'block' : 'none';
-}
+        gp = max(int(raw.get('gamesPlayed', 1)), 1)
 
-function onFocus() {
-  const val = document.getElementById('school-input').value.trim();
-  if (val && !selectedSchool) onSearch(val);
-}
+        result = {
+            'games': gp,
+            'fgp':  round(raw.get('fieldGoalPct', 0) * 100, 1),
+            'tpa':  round(raw.get('threePointFieldGoalsAttempted', 0) / gp, 1),
+            'tpp':  round(raw.get('threePointFieldGoalPct', 0) * 100, 1),
+            'fta':  round(raw.get('freeThrowsAttempted', 0) / gp, 1),
+            'ftp':  round(raw.get('freeThrowPct', 0) * 100, 1),
+            'pts':  round(raw.get('points', 0) / gp, 1),
+            'reb':  round(raw.get('totalRebounds', 0) / gp, 1),
+            'ast':  round(raw.get('assists', 0) / gp, 1),
+            'stl':  round(raw.get('steals', 0) / gp, 1),
+            'blk':  round(raw.get('blocks', 0) / gp, 1),
+            'tov':  round(raw.get('turnovers', 0) / gp, 1),
+            'min':  round(raw.get('minutesPerGame', 0), 1),
+        }
+        print(f"ESPN: {player_name} GP={gp} PTS={result['pts']} REB={result['reb']} TO/G={result['tov']}")
+        return result, height_inches, None
 
-function selectSchool(i) {
-  selectedSchool = filtered[i];
-  closeDD();
-  document.getElementById('school-input').value = '';
-  document.getElementById('search-wrap').style.display = 'none';
+    except Exception as e:
+        return None, None, f"ESPN error: {e}"
 
-  // Show pill
-  const pill = document.getElementById('selected-pill');
-  pill.classList.add('show');
-  document.getElementById('selected-school-name').textContent = selectedSchool.n;
-  const badge = document.getElementById('selected-badge');
-  badge.textContent = selectedSchool.d;
-  badge.className = 'div-badge ' + selectedSchool.d;
+# ─── HEIGHT FETCHER (Sidearm roster page) ─────────────────────────────────────
+def fetch_height_from_roster(domain, player_name):
+    """Fetch a single player's height from the roster page."""
+    # Use fetch_all_heights and look up the player
+    all_heights = fetch_all_heights(domain)
+    if all_heights:
+        # Try exact match
+        h = all_heights.get(player_name.lower())
+        if h: return h
+        # Try partial match
+        pl = player_name.lower()
+        for name, height in all_heights.items():
+            parts = pl.split()
+            if all(p in name for p in parts if len(p) > 1):
+                return height
+    return None
 
-  // Show division detected
-  const div = selectedSchool.d;
-  const effectiveDiv = ['D1','D2','D3'].includes(div) ? div : 'D3';
-  document.getElementById('div-label').textContent = div;
-  document.getElementById('bench-label').textContent = BENCHMARKS[div] || BENCHMARKS.D3;
-  document.getElementById('div-detected').classList.add('show');
+# ─── SIDEARM PARSER ───────────────────────────────────────────────────────────
+def parse_sidearm(html, player_name):
+    """
+    Parse a Sidearm Sports stats page.
+    Sidearm is consistent: averages table + overall totals table.
+    We get per-game stats from averages, and 3PA/TO from overall totals.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    averages_stats = None
+    overall_tpa = 0.0
+    overall_tov = 0.0
+    overall_fta = 0.0
 
-  // Show enter button
-  const btn = document.getElementById('enter-btn');
-  btn.classList.add('show');
-  btn.style.background = DIV_COLORS[div] || '#3b82f6';
-}
+    for table in soup.find_all('table'):
+        headers = [th.get_text(strip=True).upper() for th in table.find_all('th')]
+        h_str = ' '.join(headers)
 
-function clearSchool() {
-  selectedSchool = null;
-  document.getElementById('selected-pill').classList.remove('show');
-  document.getElementById('search-wrap').style.display = '';
-  document.getElementById('school-input').value = '';
-  document.getElementById('div-detected').classList.remove('show');
-  document.getElementById('enter-btn').classList.remove('show');
-  document.getElementById('school-input').focus();
-}
+        is_avg = 'FG%' in h_str and 'REB' in h_str and 'FGM' not in h_str and 'PTS' in h_str
+        is_overall = 'FGM' in h_str and ('3PTA' in h_str or '3PA' in h_str)
 
-function closeDD() {
-  document.getElementById('school-dropdown').style.display = 'none';
-}
+        tpa_col = next((i for i, h in enumerate(headers) if h in ['3PTA', '3PA']), None)
+        to_col  = next((i for i, h in enumerate(headers) if h in ['TO', 'TOV', 'TURNOVERS', 'T/O', 'TURN']), None)
+        fta_col = next((i for i, h in enumerate(headers) if h in ['FTA']), None)
 
-function enterApp() {
-  if (!selectedSchool) return;
-  const div = selectedSchool.d;
-  const effectiveDiv = ['D1','D2','D3'].includes(div) ? div : 'D3';
-  const url = `app.html?school=${encodeURIComponent(selectedSchool.n)}&div=${encodeURIComponent(effectiveDiv)}&schoolDiv=${encodeURIComponent(div)}`;
-  window.location.href = url;
-}
+        for row in table.find_all('tr'):
+            row_text = row.get_text(' ', strip=True).lower()
+            if not name_matches(row_text, player_name): continue
+            cells = row.find_all('td')
+            if len(cells) < 6: continue
 
-document.addEventListener('click', e => {
-  if (!e.target.closest('#search-wrap')) closeDD();
-});
+            if is_avg and averages_stats is None:
+                gp   = safe_float(cells, 2) or 1
+                mins = safe_float(cells, 3)
+                fgp  = pct(safe_float(cells, 4))
+                tpp  = pct(safe_float(cells, 5))
+                ftp  = pct(safe_float(cells, 6))
+                reb  = safe_float(cells, 9)
+                ast  = safe_float(cells, 10)
+                stl  = safe_float(cells, 11)
+                blk  = safe_float(cells, 12)
+                pts  = safe_float(cells, 13)
+                if pts > 0 or reb > 0:
+                    print(f"Sidearm avg row: GP={gp} PTS={pts} REB={reb} FG%={fgp} MIN={mins}")
+                    averages_stats = {
+                        'games': int(gp), 'fgp': fgp, 'tpa': 0.0, 'tpp': tpp,
+                        'fta': 0.0, 'ftp': ftp, 'reb': round(reb,1), 'pts': round(pts,1),
+                        'ast': round(ast,1), 'stl': round(stl,1),
+                        'blk': round(blk,1), 'tov': 0.0, 'min': round(mins,1)
+                    }
 
-document.getElementById('school-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && filtered.length > 0) selectSchool(0);
-});
-</script>
-</body>
-</html>
+            if is_overall:
+                gp2 = safe_float(cells, 2) or 1
+                tpa_raw = safe_float(cells, tpa_col) if tpa_col is not None else 0.0
+                to_raw  = safe_float(cells, to_col)  if to_col  is not None else 0.0
+
+                # If TO not found via header, scan last 10 columns for total TOs
+                if to_raw == 0:
+                    gp2_int = max(int(gp2), 1)
+                    for ci in range(max(0, len(cells)-10), len(cells)):
+                        v = safe_float(cells, ci)
+                        # Plausible season total TOs: integer, between 5 and 8 per game
+                        if 5 <= v <= gp2_int * 8 and abs(v - round(v)) < 0.01:
+                            to_raw = v
+                            print(f"TO total found at col {ci}: {v} -> {round(v/gp2,2)}/game")
+                            break
+
+                if tpa_raw > 0 or to_raw > 0:
+                    overall_tpa = round(tpa_raw / gp2, 1)
+                    overall_tov = round(to_raw  / gp2, 1)
+                    print(f"Sidearm overall: 3PA/G={overall_tpa} TO/G={overall_tov}")
+                fta_raw = safe_float(cells, fta_col) if fta_col is not None else 0.0
+                if fta_raw > 0:
+                    overall_fta = round(fta_raw / gp2, 1)
+
+    if averages_stats:
+        averages_stats['tpa'] = overall_tpa
+        averages_stats['tov'] = overall_tov
+        averages_stats['fta'] = overall_fta
+        return averages_stats
+    return None
+
+# ─── PRESTOSPORTS PARSER ──────────────────────────────────────────────────────
+def parse_presto(html, player_name):
+    """
+    Parse a PrestoSports stats page.
+    Used for NAIA (naiastats.prestosports.com) and NJCAA (njcaastats.prestosports.com)
+    and any D2/D3 school that uses PrestoSports.
+    PrestoSports column order is consistent across ALL schools on the platform.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+
+    for table in soup.find_all('table'):
+        headers = [th.get_text(strip=True).upper() for th in table.find_all('th')]
+        h_str = ' '.join(headers)
+        if 'FG%' not in h_str or 'PTS' not in h_str: continue
+
+        # Build a column index map from headers
+        col = {}
+        for i, h in enumerate(headers):
+            col[h] = i
+
+        for row in table.find_all('tr'):
+            row_text = row.get_text(' ', strip=True)
+            if not name_matches(row_text, player_name): continue
+            cells = row.find_all('td')
+            if len(cells) < 8: continue
+
+            try:
+                # Use header-based column lookup where possible
+                def get(key, fallback_idx, divide_by_gp=False):
+                    idx = col.get(key, fallback_idx)
+                    val = safe_float(cells, idx)
+                    return round(val / gp, 1) if divide_by_gp and val > gp else round(val, 1)
+
+                gp = max(safe_float(cells, col.get('GP', 1)), 1)
+
+                # PrestoSports standard layout
+                mins_total = safe_float(cells, col.get('MIN', 3))
+                mins = round(mins_total / gp, 1) if mins_total > 100 else round(mins_total, 1)
+
+                fgp = pct(safe_float(cells, col.get('FG%', 6)))
+                tpa_total = safe_float(cells, col.get('3PA', 8))
+                tpa = round(tpa_total / gp, 1)
+                tpp = pct(safe_float(cells, col.get('3P%', 9)))
+                fta_total = safe_float(cells, col.get('FTA', 11))
+                fta = round(fta_total / gp, 1)
+                ftp = pct(safe_float(cells, col.get('FT%', 12)))
+                reb = safe_float(cells, col.get('REB', 15))
+                ast = safe_float(cells, col.get('AST', 16))
+                to_total = safe_float(cells, col.get('TO', col.get('TOV', 17)))
+                tov = round(to_total / gp, 1) if to_total > gp else round(to_total, 1)
+                stl = safe_float(cells, col.get('STL', 18))
+                blk = safe_float(cells, col.get('BLK', 19))
+                pts = safe_float(cells, col.get('PTS', 20))
+
+                if pts <= 0 and fgp <= 0: continue
+
+                print(f"Presto: GP={gp} PTS={pts} REB={reb} TO/G={tov} 3PA/G={tpa}")
+                return {
+                    'games': int(gp), 'fgp': fgp, 'tpa': tpa, 'tpp': tpp,
+                    'fta': fta, 'ftp': ftp, 'reb': round(reb,1), 'pts': round(pts,1),
+                    'ast': round(ast,1), 'stl': round(stl,1),
+                    'blk': round(blk,1), 'tov': tov, 'min': mins
+                }
+            except Exception as e:
+                print(f"Presto parse error: {e}")
+                continue
+    return None
+
+def guess_domain(school_name):
+    """
+    Try common URL patterns to find a school's athletics website.
+    Returns the working domain or None.
+    Most schools use Sidearm which has consistent URL structure.
+    """
+    # Clean school name for URL guessing
+    name = school_name.lower()
+    name = re.sub(r'[^a-z0-9\s]', '', name)  # remove special chars
+    name = name.strip()
+    
+    # Build slug variants
+    slug = name.replace(' ', '')           # baldwinwallace
+    slug2 = name.replace(' ', '-')        # baldwin-wallace  
+    words = name.split()
+    first = words[0] if words else ''
+    abbrev = ''.join(w[0] for w in words) # bw
+
+    # Common patterns - ordered by likelihood
+    candidates = [
+        f"go{slug}.com",
+        f"{slug}athletics.com",
+        f"{slug}sports.com",
+        f"{slug}.com",
+        f"{slug2}.com",
+        f"go{slug2}.com",
+        f"{first}athletics.com",
+        f"go{first}.com",
+    ]
+
+    # Test each candidate for Sidearm basketball stats page
+    test_path = "/sports/mens-basketball/stats"
+    for candidate in candidates:
+        try:
+            url = f"https://{candidate}{test_path}"
+            resp = requests.get(url, headers=HEADERS, timeout=6)
+            if resp.status_code == 200 and len(resp.text) > 5000:
+                platform = detect_platform(resp.text)
+                if platform in ['sidearm', 'presto']:
+                    print(f"Found domain: {candidate} ({platform})")
+                    return candidate
+        except:
+            continue
+    
+    return None
+
+
+# ─── MAIN /search ENDPOINT ────────────────────────────────────────────────────
+@app.route('/search', methods=['GET'])
+def search():
+    player   = request.args.get('player', '').strip()
+    school   = request.args.get('school', '').strip()
+    division = request.args.get('div',    '').strip().upper()
+    season   = request.args.get('season', '2025-26').strip()
+
+    if not player or not school:
+        return jsonify({'error': 'player and school required'}), 400
+
+    print(f"\n=== SEARCH: {player} @ {school} [{division}] {season} ===")
+
+    # ── 1. D1 → ESPN API ──────────────────────────────────────────────────────
+    if division == 'D1':
+        stats, height, err = fetch_espn_stats(player, school, season)
+        if stats:
+            return jsonify({'success': True, 'stats': stats, 'height': height, 'source': 'espn'})
+        print(f"ESPN failed ({err}), falling through to school site")
+        # Fall through — some D1 schools might not be in ESPN_IDS yet
+
+    # ── 2. NAIA → PrestoSports central site ───────────────────────────────────
+    if division == 'NAIA':
+        slug = NAIA_SLUGS.get(school)
+        if not slug:
+            for k, v in NAIA_SLUGS.items():
+                if school.lower() in k.lower() or k.lower() in school.lower():
+                    slug = v; break
+        if slug:
+            for s in dedup([season, '2025-26', '2024-25']):
+                url = f"https://naiastats.prestosports.com/sports/mbkb/{s}/teams/{slug}/players"
+                try:
+                    resp = requests.get(url, headers=HEADERS, timeout=10)
+                    if resp.status_code == 200:
+                        stats = parse_presto(resp.text, player)
+                        if stats:
+                            return jsonify({'success': True, 'stats': stats, 'height': None, 'source': 'presto_naia'})
+                except Exception as e:
+                    print(f"NAIA error: {e}")
+        # If slug not found or presto failed, fall through to domain-based lookup
+
+    # ── 3. NJCAA → PrestoSports central site ──────────────────────────────────
+    if division in ['JUCO', 'NJCAA']:
+        slug = NJCAA_SLUGS.get(school)
+        if not slug:
+            for k, v in NJCAA_SLUGS.items():
+                if school.lower() in k.lower() or k.lower() in school.lower():
+                    slug = v; break
+        if slug:
+            for s in dedup([season, '2025-26', '2024-25']):
+                url = f"https://njcaastats.prestosports.com/sports/mbkb/{s}/teams/{slug}/players"
+                try:
+                    resp = requests.get(url, headers=HEADERS, timeout=10)
+                    if resp.status_code == 200:
+                        stats = parse_presto(resp.text, player)
+                        if stats:
+                            return jsonify({'success': True, 'stats': stats, 'height': None, 'source': 'presto_njcaa'})
+                except Exception as e:
+                    print(f"NJCAA error: {e}")
+            return jsonify({'success': False, 'error': f"Could not find {player} on NJCAA stats"}), 404
+
+    # ── 4. D2/D3/NAIA via school domain — auto-detect Sidearm or PrestoSports ─
+    domain = NCAA_DOMAINS.get(school)
+    if not domain:
+        for k, v in NCAA_DOMAINS.items():
+            if school.lower() in k.lower() or k.lower() in school.lower():
+                domain = v; break
+
+    if not domain:
+        # Auto-guess domain from school name
+        domain = guess_domain(school)
+        if domain:
+            print(f"Auto-guessed domain for {school}: {domain}")
+            # Save it for future use
+            NCAA_DOMAINS[school] = domain
+
+    for s in dedup([season, '2025-26', '2024-25']):
+        for url in [
+            f"https://{domain}/sports/mens-basketball/stats/{s}",
+            f"https://{domain}/sports/mens-basketball/stats",
+            f"https://{domain}/sports/mbkb/stats/{s}",
+            f"https://{domain}/sports/mbkb/stats",
+        ]:
+            try:
+                resp = requests.get(url, headers=HEADERS, timeout=12)
+                if resp.status_code != 200: continue
+
+                platform = detect_platform(resp.text)
+                print(f"URL: {url} | Platform: {platform}")
+
+                # Try platform-specific parser, then fall back to the other
+                stats = None
+                if platform == 'sidearm':
+                    stats = parse_sidearm(resp.text, player)
+                    if not stats: stats = parse_presto(resp.text, player)
+                elif platform == 'presto':
+                    stats = parse_presto(resp.text, player)
+                    if not stats: stats = parse_sidearm(resp.text, player)
+                else:
+                    # Unknown — try both
+                    stats = parse_sidearm(resp.text, player)
+                    if not stats: stats = parse_presto(resp.text, player)
+
+                if stats:
+                    height = fetch_height_from_roster(domain, player)
+                    return jsonify({'success': True, 'stats': stats, 'height': height, 'source': platform})
+
+            except Exception as e:
+                print(f"Error {url}: {e}")
+                continue
+
+    return jsonify({'success': False, 'error': f"Could not find stats for {player} at {school}. Stats may not be posted yet."}), 404
+
+
+# ─── ESPN D1 ROSTER FETCHER ───────────────────────────────────────────────────
+def fetch_espn_roster(school_name):
+    """Fetch full D1 roster with stats via ESPN API."""
+    espn_id = ESPN_IDS.get(school_name)
+    if not espn_id:
+        for k, v in ESPN_IDS.items():
+            if school_name.lower() in k.lower() or k.lower() in school_name.lower():
+                espn_id = v; break
+    if not espn_id:
+        return None, f"School not in ESPN database"
+
+    try:
+        # Step 1: Get roster (names, IDs, heights)
+        roster_url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams/{espn_id}/roster"
+        resp = requests.get(roster_url, headers=HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return None, f"ESPN roster unavailable (status {resp.status_code})"
+
+        data = resp.json()
+        athletes = data.get('athletes', [])
+        if not athletes:
+            for group in data.get('coach', []):
+                athletes.extend(group.get('athletes', []))
+
+        if not athletes:
+            return None, "No athletes found on ESPN roster"
+
+        players = []
+        for athlete in athletes:
+            player_id = str(athlete.get('id', ''))
+            full_name = athlete.get('fullName', '') or athlete.get('displayName', '')
+            if not full_name or not player_id:
+                continue
+
+            # Parse height
+            height_inches = 72
+            ht_display = athlete.get('displayHeight', '')
+            if ht_display:
+                h = parse_height(ht_display)
+                if h: height_inches = h
+            elif athlete.get('height'):
+                try: height_inches = int(round(float(athlete['height'])))
+                except: pass
+
+            # Step 2: Get stats for this player
+            try:
+                stats_url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/athletes/{player_id}/statistics/0"
+                sresp = requests.get(stats_url, headers=HEADERS, timeout=8)
+                if sresp.status_code != 200:
+                    stats_url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/athletes/{player_id}/statistics"
+                    sresp = requests.get(stats_url, headers=HEADERS, timeout=8)
+                if sresp.status_code != 200:
+                    continue
+
+                sdata = sresp.json()
+                cats = sdata.get('splits', {}).get('categories', [])
+                raw = {}
+                for cat in cats:
+                    for stat in cat.get('stats', []):
+                        raw[stat.get('name', '')] = stat.get('value', 0)
+
+                gp = max(int(raw.get('gamesPlayed', 0)), 1)
+                if gp < 3:
+                    continue  # skip players with very few games
+
+                min_pg = round(raw.get('minutesPerGame', 0), 1)
+                if min_pg < 5:
+                    continue  # skip bench players with minimal minutes
+
+                players.append({
+                    'name': full_name,
+                    'games': gp,
+                    'fgp':  round(raw.get('fieldGoalPct', 0) * 100, 1),
+                    'tpa':  round(raw.get('threePointFieldGoalsAttempted', 0) / gp, 1),
+                    'tpp':  round(raw.get('threePointFieldGoalPct', 0) * 100, 1),
+                    'fta':  round(raw.get('freeThrowsAttempted', 0) / gp, 1),
+                    'ftp':  round(raw.get('freeThrowPct', 0) * 100, 1),
+                    'pts':  round(raw.get('points', 0) / gp, 1),
+                    'reb':  round(raw.get('totalRebounds', 0) / gp, 1),
+                    'ast':  round(raw.get('assists', 0) / gp, 1),
+                    'stl':  round(raw.get('steals', 0) / gp, 1),
+                    'blk':  round(raw.get('blocks', 0) / gp, 1),
+                    'tov':  round(raw.get('turnovers', 0) / gp, 1),
+                    'min':  min_pg,
+                    'height': height_inches,
+                })
+                print(f"ESPN roster: {full_name} GP={gp} PTS={round(raw.get('points',0)/gp,1)} MIN={min_pg}")
+
+            except Exception as e:
+                print(f"ESPN stats error for {full_name}: {e}")
+                continue
+
+        if not players:
+            return None, "No player stats found — season may not have started yet"
+
+        return sorted(players, key=lambda x: x['min'], reverse=True), None
+
+    except Exception as e:
+        return None, f"ESPN error: {e}"
+
+
+# ─── /roster ENDPOINT ─────────────────────────────────────────────────────────
+@app.route('/roster', methods=['GET'])
+def roster():
+    school  = request.args.get('school', '').strip()
+    division = request.args.get('div', '').strip().upper()
+    season  = request.args.get('season', '2025-26').strip()
+
+    if not school:
+        return jsonify({'error': 'school required'}), 400
+
+    # ── D1 → ESPN API ─────────────────────────────────────────────────────────
+    if division == 'D1':
+        players, err = fetch_espn_roster(school)
+        if players:
+            return jsonify({'success': True, 'school': school, 'players': players, 'season': season, 'platform': 'espn'})
+        print(f"ESPN roster failed ({err}), trying domain fallback")
+        # Fall through to domain-based lookup for D1 schools that have Sidearm sites
+
+    domain = NCAA_DOMAINS.get(school)
+    if not domain:
+        for k, v in NCAA_DOMAINS.items():
+            if school.lower() in k.lower() or k.lower() in school.lower():
+                domain = v; break
+    if not domain:
+        domain = guess_domain(school)
+        if domain:
+            print(f"Auto-guessed domain for {school}: {domain}")
+            NCAA_DOMAINS[school] = domain
+    if not domain:
+        if division == 'D1':
+            return jsonify({'success': False, 'error': f"Could not load D1 roster for {school} — ESPN stats may not be available yet this season"}), 404
+        return jsonify({'success': False, 'error': f"School '{school}' not in database yet"}), 404
+
+    for s in dedup([season, '2025-26', '2024-25']):
+        for url in [
+            f"https://{domain}/sports/mens-basketball/stats/{s}",
+            f"https://{domain}/sports/mens-basketball/stats",
+        ]:
+            try:
+                resp = requests.get(url, headers=HEADERS, timeout=12)
+                if resp.status_code != 200: continue
+                platform = detect_platform(resp.text)
+                players = parse_roster(resp.text, platform)
+                if players:
+                    heights = fetch_all_heights(domain)
+                    for p in players:
+                        h = heights.get(p['name'].lower())
+                        if h: p['height'] = h
+                    return jsonify({'success': True, 'school': school, 'players': players, 'season': s, 'platform': platform})
+            except Exception as e:
+                print(f"Roster error: {e}")
+
+    return jsonify({'success': False, 'error': f"Could not load roster for {school}"}), 404
+
+
+def fetch_all_heights(domain):
+    """
+    Fetch heights for all players from the roster page.
+    Tries multiple methods in order of reliability:
+    1. Sidearm JSON API (most reliable - bypasses JS rendering)
+    2. Sidearm/PrestoSports HTML table
+    3. Player card blocks fallback
+    """
+    heights = {}
+
+    # ── Method 1: Sidearm hidden JSON API ─────────────────────────────────────
+    # Most Sidearm sites expose roster data as JSON at this endpoint
+    sidearm_api_urls = [
+        f"https://{domain}/services/responsive/teamroster.ashx?sport=mbkb&path=mbkb",
+        f"https://{domain}/services/responsive/teamroster.ashx?sport=mens-basketball",
+        f"https://{domain}/api/v1/roster?sport=mbkb",
+    ]
+    for api_url in sidearm_api_urls:
+        try:
+            resp = requests.get(api_url, headers=HEADERS, timeout=8)
+            if resp.status_code != 200: continue
+            data = resp.json()
+            # Sidearm JSON: list of player objects with 'height', 'name' fields
+            players = data if isinstance(data, list) else data.get('players', data.get('roster', []))
+            for p in players:
+                name = p.get('name', p.get('fullName', p.get('display_name', '')))
+                ht_raw = p.get('height', p.get('height_display', p.get('ht', '')))
+                if name and ht_raw:
+                    h = parse_height(str(ht_raw))
+                    if h:
+                        heights[name.lower().strip()] = h
+                        print(f"Sidearm API height: {name} = {h}")
+            if heights:
+                print(f"Got {len(heights)} heights from Sidearm API at {api_url}")
+                return heights
+        except Exception as e:
+            print(f"Sidearm API height error ({api_url}): {e}")
+
+    # ── Method 2: HTML roster page ────────────────────────────────────────────
+    urls = [
+        f"https://{domain}/sports/mens-basketball/roster",
+        f"https://{domain}/sports/mbkb/roster",
+        f"https://{domain}/sports/mens-basketball/roster.aspx",
+    ]
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            if resp.status_code != 200: continue
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+            # Method 2a: Look for JSON embedded in page (common in modern Sidearm)
+            import json as json_mod
+            for script in soup.find_all('script'):
+                txt = script.string or ''
+                # Look for roster data embedded as JSON
+                if 'height' in txt.lower() and ('roster' in txt.lower() or 'players' in txt.lower()):
+                    # Try to extract JSON arrays
+                    import re as re_mod
+                    matches = re_mod.findall(r'\{[^{}]*"height"[^{}]*"[^"]*"[^{}]*\}', txt)
+                    for m in matches:
+                        try:
+                            obj = json_mod.loads(m)
+                            name = obj.get('name','') or obj.get('fullName','')
+                            ht = obj.get('height','') or obj.get('ht','')
+                            if name and ht:
+                                h = parse_height(str(ht))
+                                if h: heights[name.lower()] = h
+                        except: pass
+                    if heights:
+                        print(f"Got {len(heights)} heights from embedded JSON at {url}")
+                        return heights
+
+            # Method 2b: HTML table with Ht. column
+            for table in soup.find_all('table'):
+                headers_row = [th.get_text(strip=True).upper() for th in table.find_all('th')]
+                if 'HT.' not in headers_row and 'HT' not in headers_row and 'HEIGHT' not in headers_row:
+                    continue
+                ht_idx = next((i for i,h in enumerate(headers_row) if h in ['HT.','HT','HEIGHT']), None)
+                name_idx = next((i for i,h in enumerate(headers_row) if h in ['NAME','PLAYER']), None)
+                if ht_idx is None: continue
+
+                for row in table.find_all('tr'):
+                    cells = row.find_all('td')
+                    if len(cells) <= ht_idx: continue
+                    ht_text = cells[ht_idx].get_text(strip=True)
+                    h = parse_height(ht_text)
+                    if not h: continue
+                    name = ''
+                    if name_idx is not None:
+                        name = cells[name_idx].get_text(strip=True)
+                    if not name:
+                        link = row.find('a')
+                        if link: name = link.get_text(strip=True)
+                    if not name:
+                        name = cells[1].get_text(strip=True) if len(cells) > 1 else ''
+                    name = name.strip()
+                    if name and len(name) > 2:
+                        heights[name.lower()] = h
+                        print(f"Height table: {name} = {h}\"")
+
+            if heights:
+                print(f"Got {len(heights)} heights from HTML table at {url}")
+                return heights
+
+            # Method 2c: Scan data attributes (Sidearm stores data in data-* attrs)
+            for el in soup.find_all(attrs={'data-height': True}):
+                ht_text = el.get('data-height', '')
+                h = parse_height(ht_text)
+                if not h: continue
+                # Try to find name nearby
+                name_el = el.find(class_=lambda c: c and 'name' in c.lower()) if el else None
+                if not name_el:
+                    name_el = el.find('a')
+                if name_el:
+                    name = name_el.get_text(strip=True)
+                    if name and len(name) > 2:
+                        heights[name.lower()] = h
+                        print(f"Data-attr height: {name} = {h}")
+
+            if heights:
+                print(f"Got {len(heights)} heights from data-attrs at {url}")
+                return heights
+
+            # Method 2d: Player card blocks
+            for li in soup.find_all('li'):
+                text = li.get_text(' ', strip=True)
+                h = parse_height(text)
+                if not h: continue
+                link = li.find('a')
+                if link:
+                    name = link.get_text(strip=True).lower()
+                    if name and len(name) > 2:
+                        heights[name] = h
+
+            if heights:
+                print(f"Got {len(heights)} heights from cards at {url}")
+                return heights
+
+        except Exception as e:
+            print(f"Height fetch error ({url}): {e}")
+
+    return heights
+
+
+def parse_roster(html, platform):
+    """Parse all players from a stats page for the roster view."""
+    soup = BeautifulSoup(html, 'html.parser')
+    players = []
+    overall_data = {}  # name -> {tpa, tov}
+
+    # First pass: get totals from overall table for 3PA and TO
+    for table in soup.find_all('table'):
+        headers = [th.get_text(strip=True).upper() for th in table.find_all('th')]
+        h_str = ' '.join(headers)
+        is_overall = 'FGM' in h_str and ('3PTA' in h_str or '3PA' in h_str)
+        if not is_overall: continue
+
+        tpa_col = next((i for i,h in enumerate(headers) if h in ['3PTA','3PA']), None)
+        to_col  = next((i for i,h in enumerate(headers) if h in ['TO','TOV','TURNOVERS','T/O']), None)
+        fta_col = next((i for i,h in enumerate(headers) if h in ['FTA']), None)
+
+        for row in table.find_all('tr'):
+            cells = row.find_all('td')
+            if len(cells) < 8: continue
+            name_raw = cells[1].get_text(strip=True) if len(cells) > 1 else ''
+            name = re.sub(r'^\d+\s*', '', name_raw).strip()
+            dup_match2 = re.match(r'^(.+?)\d+$', name)
+            if dup_match2: name = dup_match2.group(1).strip()
+            if ',' in name:
+                parts = name.split(',', 1)
+                name = parts[1].strip() + ' ' + parts[0].strip()
+            if not name or len(name) < 3: continue
+            gp = safe_float(cells, 2) or 1
+            tpa_raw = safe_float(cells, tpa_col) if tpa_col else 0
+            to_raw = safe_float(cells, to_col) if to_col else 0
+            fta_raw = safe_float(cells, fta_col) if fta_col is not None else 0
+            # Scan for TO if not found
+            if to_raw == 0:
+                for ci in range(max(0, len(cells)-10), len(cells)):
+                    v = safe_float(cells, ci)
+                    if 5 <= v <= gp * 8 and abs(v - round(v)) < 0.01:
+                        to_raw = v; break
+            overall_data[name.lower()] = {
+                'tpa': round(tpa_raw/gp, 1),
+                'tov': round(to_raw/gp, 1),
+                'fta': round(fta_raw/gp, 1),
+            }
+        break
+
+    # Second pass: get per-game stats from averages table
+    for table in soup.find_all('table'):
+        headers = [th.get_text(strip=True).upper() for th in table.find_all('th')]
+        h_str = ' '.join(headers)
+        is_avg = 'FG%' in h_str and 'REB' in h_str and 'FGM' not in h_str and 'PTS' in h_str
+        if not is_avg: continue
+
+        for row in table.find_all('tr'):
+            cells = row.find_all('td')
+            if len(cells) < 8: continue
+            name_raw = cells[1].get_text(strip=True) if len(cells) > 1 else ''
+            name = re.sub(r'^\d+\s*', '', name_raw).strip()
+            # Fix duplicate: "Richardson, Isaac23Richardson, Isaac" -> "Isaac Richardson"
+            dup = re.match(r'^(.+?)\d+\1$', name)
+            if dup: name = dup.group(1).strip()
+            # Convert "Last, First" to "First Last"
+            if ',' in name:
+                parts = name.split(',', 1)
+                name = parts[1].strip() + ' ' + parts[0].strip()
+            if not name or name in ['Total','Opponents','Team'] or len(name) < 3: continue
+            try:
+                gp   = safe_float(cells, 2) or 1
+                mins_raw = safe_float(cells, 3)
+                # If mins_raw > 100, it's total minutes - divide by games
+                mins = round(mins_raw / gp, 1) if mins_raw > 100 else round(mins_raw, 1)
+                fgp  = pct(safe_float(cells, 4))
+                tpp  = pct(safe_float(cells, 5))
+                ftp  = pct(safe_float(cells, 6))
+                reb  = safe_float(cells, 9)
+                ast  = safe_float(cells, 10)
+                stl  = safe_float(cells, 11)
+                blk  = safe_float(cells, 12)
+                pts  = safe_float(cells, 13)
+                # If pts > 50, likely total points - divide by games
+                if pts > 50: pts = round(pts / gp, 1)
+                if reb > 30: reb = round(reb / gp, 1)
+                if ast > 20: ast = round(ast / gp, 1)
+                if stl > 15: stl = round(stl / gp, 1)
+                if blk > 15: blk = round(blk / gp, 1)
+                if mins < 5 or gp < 3: continue
+                extra = overall_data.get(name.lower())
+                # Try reverse "Last First" -> "First Last" if not found
+                if not extra:
+                    parts = name.split()
+                    if len(parts) >= 2:
+                        alt = (parts[-1] + ' ' + ' '.join(parts[:-1])).lower()
+                        extra = overall_data.get(alt)
+                if not extra:
+                    # Fuzzy: find any key that shares both first and last name
+                    nl = name.lower()
+                    for k in overall_data:
+                        kparts = k.split()
+                        nparts = nl.split()
+                        if len(kparts) >= 2 and len(nparts) >= 2:
+                            if kparts[0] in nl and kparts[-1] in nl:
+                                extra = overall_data[k]; break
+                if not extra:
+                    extra = {'tpa': 0.0, 'tov': 0.0, 'fta': 0.0}
+                players.append({
+                    'name': name, 'games': int(gp),
+                    'fgp': fgp, 'tpa': extra['tpa'], 'tpp': tpp,
+                    'fta': extra.get('fta', 0.0), 'ftp': ftp,
+                    'reb': round(reb,1), 'pts': round(pts,1),
+                    'ast': round(ast,1), 'stl': round(stl,1),
+                    'blk': round(blk,1), 'tov': extra['tov'],
+                    'min': round(mins,1), 'height': 72
+                })
+            except:
+                continue
+        if players: break
+
+    return sorted(players, key=lambda x: x['min'], reverse=True)
+
+
+# ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'ok', 'version': '3.0', 'systems': ['espn_d1', 'sidearm', 'presto_naia', 'presto_njcaa']})
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
