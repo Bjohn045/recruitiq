@@ -391,7 +391,54 @@ def fetch_height_from_roster(domain, player_name):
                 return height
     return None
 
-# ─── SIDEARM PARSER ───────────────────────────────────────────────────────────
+
+def fetch_height_web(player_name, school_name):
+    """
+    Search the web for a player's height as a fallback.
+    Searches Google and parses the result for height info.
+    """
+    try:
+        query = player_name + " " + school_name + " basketball height"
+        search_url = "https://www.google.com/search?q=" + requests.utils.quote(query)
+        resp = requests.get(search_url, headers=HEADERS, timeout=8)
+        if resp.status_code != 200:
+            return None
+
+        text = resp.text
+
+        # Look for height patterns like 6'9", 6-9, 6 ft 9 in
+        # Pattern: digit 5-7, separator, 1-2 digits
+        p1 = re.search(r"([5-7])[\x27\x60\-]\s*(\d{1,2})(?:[\x22\s]|in)", text)
+        p2 = re.search(r"([5-7])\s*ft\.?\s*(\d{1,2})\s*in", text, re.IGNORECASE)
+        p3 = re.search(r"height[^<>]{0,40}([5-7])[^\d]{1,3}(\d{1,2})", text, re.IGNORECASE)
+
+        for m in [p1, p2, p3]:
+            if m:
+                feet = int(m.group(1))
+                inches = int(m.group(2))
+                total = feet * 12 + inches
+                if 60 <= total <= 96:
+                    print(f"Web height found for {player_name}: {feet}'{inches}\" = {total}\"")
+                    return total
+
+        # Also check page tags
+        soup = BeautifulSoup(text, "html.parser")
+        for tag in soup.find_all(["span", "div", "td"]):
+            tag_text = tag.get_text(strip=True)
+            m = re.search(r"([5-7])[\x27\-](\d{1,2})", tag_text)
+            if m:
+                feet = int(m.group(1))
+                inches = int(m.group(2))
+                total = feet * 12 + inches
+                if 60 <= total <= 96:
+                    print(f"Web height (tag) for {player_name}: {total}\"")
+                    return total
+
+        return None
+    except Exception as e:
+        print(f"Web height search error: {e}")
+        return None
+
 def parse_sidearm(html, player_name):
     """
     Parse a Sidearm Sports stats page.
@@ -623,7 +670,8 @@ def search():
                     if resp.status_code == 200:
                         stats = parse_presto(resp.text, player)
                         if stats:
-                            return jsonify({'success': True, 'stats': stats, 'height': None, 'source': 'presto_naia'})
+                            height = fetch_height_web(player, school)
+                            return jsonify({'success': True, 'stats': stats, 'height': height, 'source': 'presto_naia'})
                 except Exception as e:
                     print(f"NAIA error: {e}")
         # If slug not found or presto failed, fall through to domain-based lookup
@@ -643,7 +691,8 @@ def search():
                     if resp.status_code == 200:
                         stats = parse_presto(resp.text, player)
                         if stats:
-                            return jsonify({'success': True, 'stats': stats, 'height': None, 'source': 'presto_njcaa'})
+                            height = fetch_height_web(player, school)
+                            return jsonify({'success': True, 'stats': stats, 'height': height, 'source': 'presto_njcaa'})
                 except Exception as e:
                     print(f"NJCAA error: {e}")
             return jsonify({'success': False, 'error': f"Could not find {player} on NJCAA stats"}), 404
@@ -692,6 +741,9 @@ def search():
 
                 if stats:
                     height = fetch_height_from_roster(domain, player)
+                    # Fallback to web search if roster height not found
+                    if not height:
+                        height = fetch_height_web(player, school)
                     return jsonify({'success': True, 'stats': stats, 'height': height, 'source': platform})
 
             except Exception as e:
